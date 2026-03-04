@@ -10,6 +10,15 @@ use thiserror::Error;
 const ENV_API_KEY: &str = "STTD_OPENROUTER_API_KEY";
 const ENV_MODEL: &str = "STTD_OPENROUTER_MODEL";
 const ENV_LANGUAGE: &str = "STTD_OPENROUTER_LANGUAGE";
+const ENV_PROVIDER_KIND: &str = "STTD_PROVIDER_KIND";
+const ENV_PROVIDER_BASE_URL: &str = "STTD_PROVIDER_BASE_URL";
+const ENV_WHISPER_CMD: &str = "STTD_WHISPER_CMD";
+const ENV_WHISPER_MODEL_PATH: &str = "STTD_WHISPER_MODEL_PATH";
+const ENV_WHISPER_THREADS: &str = "STTD_WHISPER_THREADS";
+const ENV_WHISPER_BEAM_SIZE: &str = "STTD_WHISPER_BEAM_SIZE";
+const ENV_WHISPER_BEST_OF: &str = "STTD_WHISPER_BEST_OF";
+const ENV_WHISPER_NO_FALLBACK: &str = "STTD_WHISPER_NO_FALLBACK";
+const ENV_WHISPER_NO_TIMESTAMPS: &str = "STTD_WHISPER_NO_TIMESTAMPS";
 const ENV_INPUT_DEVICE: &str = "STTD_INPUT_DEVICE";
 const ENV_SOFT_SPEND_LIMIT: &str = "STTD_MONTHLY_SOFT_SPEND_LIMIT_USD";
 const ENV_ESTIMATED_REQUEST_COST: &str = "STTD_ESTIMATED_REQUEST_COST_USD";
@@ -44,6 +53,7 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProviderConfig {
+    pub kind: String,
     pub base_url: String,
     pub model: String,
     pub language: Option<String>,
@@ -53,6 +63,13 @@ pub struct ProviderConfig {
     pub max_retries: u32,
     pub capability_probe: bool,
     pub openrouter_api_key: Option<String>,
+    pub whisper_cmd: String,
+    pub whisper_model_path: Option<String>,
+    pub whisper_threads: Option<u16>,
+    pub whisper_beam_size: u16,
+    pub whisper_best_of: u16,
+    pub whisper_no_fallback: bool,
+    pub whisper_no_timestamps: bool,
     pub env_file_path: String,
 }
 
@@ -138,6 +155,7 @@ impl Default for Config {
 impl Default for ProviderConfig {
     fn default() -> Self {
         Self {
+            kind: "whisper_local".to_string(),
             base_url: "https://openrouter.ai/api/v1".to_string(),
             model: "openai/whisper-1".to_string(),
             language: Some("en".to_string()),
@@ -147,6 +165,15 @@ impl Default for ProviderConfig {
             max_retries: 2,
             capability_probe: true,
             openrouter_api_key: None,
+            whisper_cmd: "whisper-cli".to_string(),
+            whisper_model_path: Some(
+                "/usr/share/whisper.cpp/models/ggml-small.en-q5_1.bin".to_string(),
+            ),
+            whisper_threads: None,
+            whisper_beam_size: 1,
+            whisper_best_of: 1,
+            whisper_no_fallback: true,
+            whisper_no_timestamps: true,
             env_file_path: "${XDG_CONFIG_HOME:-~/.config}/sttd/sttd.env".to_string(),
         }
     }
@@ -301,6 +328,53 @@ impl Config {
         if let Some(v) = pick(ENV_LANGUAGE) {
             self.provider.language = Some(v);
         }
+        if let Some(v) = pick(ENV_PROVIDER_KIND) {
+            self.provider.kind = v.to_ascii_lowercase();
+        }
+        if let Some(v) = pick(ENV_PROVIDER_BASE_URL) {
+            self.provider.base_url = v;
+        }
+        if let Some(v) = pick(ENV_WHISPER_CMD) {
+            self.provider.whisper_cmd = v;
+        }
+        if let Some(v) = pick(ENV_WHISPER_MODEL_PATH) {
+            self.provider.whisper_model_path = Some(v);
+        }
+        if let Some(v) = pick(ENV_WHISPER_THREADS) {
+            let parsed = v.parse::<u16>().map_err(|_| ConfigError::InvalidValue {
+                field: "provider.whisper_threads",
+                reason: format!("`{v}` is not a valid unsigned integer"),
+            })?;
+            self.provider.whisper_threads = Some(parsed);
+        }
+        if let Some(v) = pick(ENV_WHISPER_BEAM_SIZE) {
+            let parsed = v.parse::<u16>().map_err(|_| ConfigError::InvalidValue {
+                field: "provider.whisper_beam_size",
+                reason: format!("`{v}` is not a valid unsigned integer"),
+            })?;
+            self.provider.whisper_beam_size = parsed;
+        }
+        if let Some(v) = pick(ENV_WHISPER_BEST_OF) {
+            let parsed = v.parse::<u16>().map_err(|_| ConfigError::InvalidValue {
+                field: "provider.whisper_best_of",
+                reason: format!("`{v}` is not a valid unsigned integer"),
+            })?;
+            self.provider.whisper_best_of = parsed;
+        }
+        if let Some(v) = pick(ENV_WHISPER_NO_FALLBACK) {
+            let parsed = v.parse::<bool>().map_err(|_| ConfigError::InvalidValue {
+                field: "provider.whisper_no_fallback",
+                reason: format!("`{v}` is not a valid bool"),
+            })?;
+            self.provider.whisper_no_fallback = parsed;
+        }
+        if let Some(v) = pick(ENV_WHISPER_NO_TIMESTAMPS) {
+            let parsed = v.parse::<bool>().map_err(|_| ConfigError::InvalidValue {
+                field: "provider.whisper_no_timestamps",
+                reason: format!("`{v}` is not a valid bool"),
+            })?;
+            self.provider.whisper_no_timestamps = parsed;
+        }
         if let Some(v) = pick(ENV_INPUT_DEVICE) {
             self.audio.input_device = Some(v);
         }
@@ -327,18 +401,59 @@ impl Config {
     }
 
     fn validate(&self, require_api_key: bool) -> Result<(), ConfigError> {
-        if self.provider.model.trim().is_empty() {
+        let provider_kind = self.provider.kind.trim().to_ascii_lowercase();
+        if provider_kind != "openrouter"
+            && provider_kind != "whisper_local"
+            && provider_kind != "whisper_server"
+        {
             return Err(ConfigError::InvalidValue {
-                field: "provider.model",
+                field: "provider.kind",
+                reason: "allowed values: openrouter|whisper_local|whisper_server".to_string(),
+            });
+        }
+
+        if provider_kind == "openrouter" {
+            if self.provider.model.trim().is_empty() {
+                return Err(ConfigError::InvalidValue {
+                    field: "provider.model",
+                    reason: "must not be empty".to_string(),
+                });
+            }
+
+            if require_api_key {
+                match self.provider.openrouter_api_key.as_deref() {
+                    Some(v) if !v.trim().is_empty() => {}
+                    _ => return Err(ConfigError::MissingApiKey),
+                }
+            }
+        }
+
+        if provider_kind == "whisper_local" && self.provider.whisper_cmd.trim().is_empty() {
+            return Err(ConfigError::InvalidValue {
+                field: "provider.whisper_cmd",
                 reason: "must not be empty".to_string(),
             });
         }
 
-        if require_api_key {
-            match self.provider.openrouter_api_key.as_deref() {
-                Some(v) if !v.trim().is_empty() => {}
-                _ => return Err(ConfigError::MissingApiKey),
-            }
+        if provider_kind == "whisper_local" && self.provider.whisper_beam_size == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "provider.whisper_beam_size",
+                reason: "must be greater than 0".to_string(),
+            });
+        }
+
+        if provider_kind == "whisper_local" && self.provider.whisper_best_of == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "provider.whisper_best_of",
+                reason: "must be greater than 0".to_string(),
+            });
+        }
+
+        if provider_kind == "whisper_server" && self.provider.base_url.trim().is_empty() {
+            return Err(ConfigError::InvalidValue {
+                field: "provider.base_url",
+                reason: "must not be empty for whisper_server".to_string(),
+            });
         }
 
         if self.audio.sample_rate_hz == 0 {
@@ -425,6 +540,15 @@ fn collect_runtime_env() -> HashMap<String, String> {
         ENV_API_KEY,
         ENV_MODEL,
         ENV_LANGUAGE,
+        ENV_PROVIDER_KIND,
+        ENV_PROVIDER_BASE_URL,
+        ENV_WHISPER_CMD,
+        ENV_WHISPER_MODEL_PATH,
+        ENV_WHISPER_THREADS,
+        ENV_WHISPER_BEAM_SIZE,
+        ENV_WHISPER_BEST_OF,
+        ENV_WHISPER_NO_FALLBACK,
+        ENV_WHISPER_NO_TIMESTAMPS,
         ENV_INPUT_DEVICE,
         ENV_SOFT_SPEND_LIMIT,
         ENV_ESTIMATED_REQUEST_COST,
@@ -515,6 +639,7 @@ mod tests {
     fn base_toml() -> &'static str {
         r#"
 [provider]
+kind = "openrouter"
 model = "openai/whisper-1"
 env_file_path = "/tmp/non-existent.env"
 

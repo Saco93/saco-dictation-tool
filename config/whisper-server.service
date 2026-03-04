@@ -1,0 +1,15 @@
+[Unit]
+Description=whisper.cpp persistent inference server for sttd
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/sttd/sttd.env
+ExecStart=/usr/bin/whisper-server -m ${STTD_WHISPER_MODEL_PATH} --host 127.0.0.1 --port 8080 -t 8 -l en -nf -nt
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

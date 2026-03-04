@@ -1,14 +1,27 @@
 [provider]
-base_url = "https://openrouter.ai/api/v1"
+kind = "whisper_local"
+# For persistent local inference, switch to:
+# kind = "whisper_server"
+# base_url = "http://127.0.0.1:8080"
+# For whisper_local this is ignored; keep this for openrouter fallback compatibility.
 model = "openai/whisper-1"
 language = "en"
 prompt = ""
-# Optional. If omitted, defaults to provider-side behavior.
-# temperature = 0.0
-timeout_ms = 20000
+# Timeout for a single transcription request. Local whisper can take longer on larger models.
+timeout_ms = 120000
 max_retries = 2
-# Startup validation still runs locally; probe can be enabled for extra strictness.
+# For openrouter only. Startup validation still runs locally.
 capability_probe = false
+whisper_cmd = "whisper-cli"
+# Example Arch model path from whisper.cpp model packages.
+whisper_model_path = "/usr/share/whisper.cpp/models/ggml-small.en-q5_1.bin"
+# Optional; if omitted, whisper.cpp picks a default thread count.
+# whisper_threads = 16
+# Fast decode profile for dictation. Increase values for better quality but slower speed.
+whisper_beam_size = 1
+whisper_best_of = 1
+whisper_no_fallback = true
+whisper_no_timestamps = true
 env_file_path = "${XDG_CONFIG_HOME:-~/.config}/sttd/sttd.env"
 
 [audio]

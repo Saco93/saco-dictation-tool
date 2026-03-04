@@ -6,6 +6,7 @@ use common::Config;
 use sttd::provider::{
     ProviderError, SttProvider,
     openrouter::{OpenRouterProvider, default_request_for_config},
+    whisper_server::WhisperServerProvider,
 };
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
@@ -669,4 +670,79 @@ sample_rate_hz = 16000
         .expect_err("request should fail");
 
     assert!(matches!(err, ProviderError::RateLimited));
+}
+
+#[tokio::test]
+async fn whisper_server_parses_text_response() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/inference"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "text": "hello from persistent whisper"
+        })))
+        .mount(&server)
+        .await;
+
+    let raw = format!(
+        r#"
+[provider]
+kind = "whisper_server"
+base_url = "{}"
+model = "unused"
+max_retries = 0
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        server.uri()
+    );
+
+    let cfg = Config::load_from_toml_for_test(&raw, &HashMap::new()).expect("load config");
+    let provider = WhisperServerProvider::new(&cfg).expect("build whisper-server provider");
+
+    let response = provider
+        .transcribe_utterance(default_request_for_config(&cfg, vec![0_i16; 200]))
+        .await
+        .expect("whisper-server request should succeed");
+
+    assert_eq!(response.transcript, "hello from persistent whisper");
+    assert!(response.segments.is_empty());
+}
+
+#[tokio::test]
+async fn whisper_server_non_2xx_is_mapped_to_typed_error() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/inference"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("temporary unavailable"))
+        .mount(&server)
+        .await;
+
+    let raw = format!(
+        r#"
+[provider]
+kind = "whisper_server"
+base_url = "{}"
+model = "unused"
+max_retries = 0
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        server.uri()
+    );
+
+    let cfg = Config::load_from_toml_for_test(&raw, &HashMap::new()).expect("load config");
+    let provider = WhisperServerProvider::new(&cfg).expect("build whisper-server provider");
+
+    let err = provider
+        .transcribe_utterance(default_request_for_config(&cfg, vec![0_i16; 200]))
+        .await
+        .expect_err("server must fail");
+
+    assert!(matches!(err, ProviderError::Http { status: 503, .. }));
 }

@@ -611,17 +611,7 @@ impl SttProvider for OpenRouterProvider {
     }
 }
 
-#[must_use]
-pub fn default_request_for_config(config: &Config, pcm16_audio: Vec<i16>) -> TranscribeRequest {
-    TranscribeRequest {
-        model: config.provider.model.clone(),
-        language: config.provider.language.clone(),
-        prompt: config.provider.prompt.clone(),
-        temperature: config.provider.temperature,
-        pcm16_audio,
-        sample_rate_hz: config.audio.sample_rate_hz,
-    }
-}
+pub use super::default_request_for_config;
 
 fn map_http_error(status: StatusCode, body: String) -> ProviderError {
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {

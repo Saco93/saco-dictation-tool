@@ -1,7 +1,12 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use common::config::Config;
 use thiserror::Error;
 
 pub mod openrouter;
+pub mod whisper_local;
+pub mod whisper_server;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Segment {
@@ -32,6 +37,8 @@ pub struct TranscribeResponse {
 pub enum ProviderError {
     #[error("provider transport failed: {0}")]
     Transport(String),
+    #[error("provider execution failed: {0}")]
+    Execution(String),
     #[error("provider authentication failed")]
     Auth,
     #[error("provider rate limited request")]
@@ -42,6 +49,10 @@ pub enum ProviderError {
     MissingTranscript,
     #[error("provider returned malformed response: {0}")]
     InvalidResponse(String),
+    #[error("provider dependency is unavailable: {0}")]
+    DependencyUnavailable(String),
+    #[error("provider is misconfigured: {0}")]
+    Misconfigured(String),
     #[error("configured model is incompatible with speech-to-text: {0}")]
     IncompatibleModel(String),
 }
@@ -68,4 +79,29 @@ pub trait SttProvider: Send + Sync {
         &self,
         request: TranscribeRequest,
     ) -> Result<TranscribeResponse, ProviderError>;
+}
+
+pub fn build_provider(config: &Config) -> Result<Arc<dyn SttProvider>, ProviderError> {
+    match config.provider.kind.trim().to_ascii_lowercase().as_str() {
+        "openrouter" => Ok(Arc::new(openrouter::OpenRouterProvider::new(config)?)),
+        "whisper_local" => Ok(Arc::new(whisper_local::WhisperLocalProvider::new(config)?)),
+        "whisper_server" => Ok(Arc::new(whisper_server::WhisperServerProvider::new(
+            config,
+        )?)),
+        other => Err(ProviderError::Misconfigured(format!(
+            "unknown provider.kind `{other}`"
+        ))),
+    }
+}
+
+#[must_use]
+pub fn default_request_for_config(config: &Config, pcm16_audio: Vec<i16>) -> TranscribeRequest {
+    TranscribeRequest {
+        model: config.provider.model.clone(),
+        language: config.provider.language.clone(),
+        prompt: config.provider.prompt.clone(),
+        temperature: config.provider.temperature,
+        pcm16_audio,
+        sample_rate_hz: config.audio.sample_rate_hz,
+    }
 }

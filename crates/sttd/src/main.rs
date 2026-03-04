@@ -20,10 +20,7 @@ use sttd::{
     debug_wav::DebugWavRecorder,
     injection::{InjectionError, Injector},
     ipc::server::{self, socket_path_from_config},
-    provider::{
-        SttProvider,
-        openrouter::{OpenRouterProvider, default_request_for_config},
-    },
+    provider::{SttProvider, build_provider, default_request_for_config},
     state::StateMachine,
 };
 
@@ -37,7 +34,7 @@ struct Args {
 #[derive(Clone)]
 struct RuntimeDeps {
     config: Arc<Config>,
-    provider: OpenRouterProvider,
+    provider: Arc<dyn SttProvider>,
     injector: Injector,
     recorder: DebugWavRecorder,
     audio_capture: AudioCapture,
@@ -58,8 +55,7 @@ async fn main() -> anyhow::Result<()> {
     let config =
         Arc::new(Config::load(args.config.as_deref()).context("failed to load sttd config")?);
 
-    let provider =
-        OpenRouterProvider::new(config.as_ref()).context("failed to create OpenRouter provider")?;
+    let provider = build_provider(config.as_ref()).context("failed to build STT provider")?;
     provider
         .validate_model_capability()
         .await

@@ -1,6 +1,6 @@
 # saco-dictation-tool
 
-Rust workspace for a Hyprland-native speech-to-text daemon (`sttd`) and CLI control tool (`sttctl`) using OpenRouter-compatible STT models.
+Rust workspace for a Hyprland-native speech-to-text daemon (`sttd`) and CLI control tool (`sttctl`) using local Whisper (`whisper.cpp`) by default, with OpenRouter-compatible STT as an optional provider.
 
 ## Crates
 
@@ -24,15 +24,27 @@ cp config/sttd.example.toml ~/.config/sttd/sttd.toml
 cp config/sttd.env.example ~/.config/sttd/sttd.env
 ```
 
-3. Set `STTD_OPENROUTER_API_KEY` in `~/.config/sttd/sttd.env`.
+3. Install local whisper runtime and model (example on Arch Linux):
 
-4. Run daemon:
+```bash
+yay -S whisper.cpp whisper.cpp-model-small.en-q5_1
+```
+
+4. Verify `STTD_WHISPER_MODEL_PATH` in `~/.config/sttd/sttd.env` points to your installed model.
+
+5. Choose provider mode:
+
+- `STTD_PROVIDER_KIND=whisper_local` for direct `whisper-cli` invocation
+- `STTD_PROVIDER_KIND=whisper_server` for persistent local inference (lower per-request overhead)
+- `STTD_PROVIDER_KIND=openrouter` plus `STTD_OPENROUTER_API_KEY` for remote OpenRouter STT
+
+6. Run daemon:
 
 ```bash
 cargo run -p sttd -- --config ~/.config/sttd/sttd.toml
 ```
 
-5. Send commands:
+7. Send commands:
 
 ```bash
 cargo run -p sttctl -- status
@@ -59,6 +71,15 @@ Install `config/sttd.service` into `~/.config/systemd/user/sttd.service`, then:
 systemctl --user daemon-reload
 systemctl --user enable --now sttd.service
 systemctl --user status sttd.service
+```
+
+For persistent local inference, also install `config/whisper-server.service` and run:
+
+```bash
+cp config/whisper-server.service ~/.config/systemd/user/whisper-server.service
+systemctl --user daemon-reload
+systemctl --user enable --now whisper-server.service
+systemctl --user status whisper-server.service
 ```
 
 ## Contract and operations docs
