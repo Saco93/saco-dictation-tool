@@ -1,0 +1,50 @@
+{
+  "repository_type": "monorepo",
+  "scan_level": "exhaustive",
+  "parts": [
+    {
+      "part_id": "sttd",
+      "project_type": "backend",
+      "root_path": "crates/sttd",
+      "entry_point": "crates/sttd/src/main.rs",
+      "tech_stack": ["Rust", "tokio", "cpal", "reqwest", "serde", "tracing"],
+      "interfaces": ["unix_socket_ipc", "provider_http_or_process", "desktop_output_backends"]
+    },
+    {
+      "part_id": "sttctl",
+      "project_type": "cli",
+      "root_path": "crates/sttctl",
+      "entry_point": "crates/sttctl/src/main.rs",
+      "tech_stack": ["Rust", "clap", "tokio"],
+      "interfaces": ["unix_socket_ipc_client"]
+    },
+    {
+      "part_id": "common",
+      "project_type": "library",
+      "root_path": "crates/common",
+      "entry_point": "crates/common/src/lib.rs",
+      "tech_stack": ["Rust", "serde", "toml", "thiserror"],
+      "interfaces": ["shared_protocol_schema", "shared_config_schema"]
+    }
+  ],
+  "integration_points": [
+    {
+      "from": "sttctl",
+      "to": "sttd",
+      "type": "unix_socket_ipc",
+      "details": "versioned request/response envelopes with command routing"
+    },
+    {
+      "from": "sttd",
+      "to": "openrouter_or_whisper",
+      "type": "provider_adapter_boundary",
+      "details": "openrouter HTTP, whisper_server HTTP, whisper_local process execution"
+    },
+    {
+      "from": "sttd",
+      "to": "desktop_output",
+      "type": "backend_execution",
+      "details": "wtype typing and/or wl-copy clipboard output"
+    }
+  ]
+}

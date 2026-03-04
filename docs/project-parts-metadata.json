@@ -1,0 +1,33 @@
+{
+  "repository_type": "monorepo",
+  "scan_level": "exhaustive",
+  "parts": [
+    {
+      "part_id": "sttd",
+      "name": "sttd",
+      "root_path": "crates/sttd",
+      "project_type_id": "backend",
+      "display_name": "Backend Service",
+      "language": "Rust",
+      "purpose": "Speech-to-text daemon runtime with audio capture, provider adapters, IPC server, and output injection"
+    },
+    {
+      "part_id": "sttctl",
+      "name": "sttctl",
+      "root_path": "crates/sttctl",
+      "project_type_id": "cli",
+      "display_name": "CLI Application",
+      "language": "Rust",
+      "purpose": "Command-line control client for daemon state and control commands"
+    },
+    {
+      "part_id": "common",
+      "name": "common",
+      "root_path": "crates/common",
+      "project_type_id": "library",
+      "display_name": "Library",
+      "language": "Rust",
+      "purpose": "Shared config and IPC protocol contract definitions"
+    }
+  ]
+}
