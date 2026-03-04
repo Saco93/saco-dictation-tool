@@ -34,7 +34,10 @@ Status and shutdown can be bound similarly:
 ```ini
 bind = SUPER,F10,exec,sttctl status
 bind = SUPER,SHIFT,F10,exec,sttctl shutdown
+bind = SUPER,F11,exec,sttctl replay-last-transcript
 ```
+
+Use `sttctl replay-last-transcript` to retry output insertion for a transcript retained after backend failure.
 
 ## systemd user service operations
 
@@ -52,5 +55,6 @@ journalctl --user -u sttd.service -f
 
 - `ERR_PROTOCOL_VERSION`: client and daemon protocol versions differ.
 - `ERR_OUTPUT_BACKEND_UNAVAILABLE`: install `wtype` or `wl-copy`, or change output mode.
+- retained transcript replay: run `sttctl status` and check `has_retained_transcript=true`; if `last_output_error_code=ERR_OUTPUT_BACKEND_UNAVAILABLE`, restore output tooling then run `sttctl replay-last-transcript`.
 - auth/provider failures: verify `STTD_OPENROUTER_API_KEY` in env file.
 - socket not reachable: check `${XDG_RUNTIME_DIR}` and service logs.

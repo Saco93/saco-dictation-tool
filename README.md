@@ -39,7 +39,11 @@ cargo run -p sttctl -- status
 cargo run -p sttctl -- ptt-press
 cargo run -p sttctl -- ptt-release
 cargo run -p sttctl -- toggle-continuous
+cargo run -p sttctl -- replay-last-transcript
 ```
+
+`replay-last-transcript` retries inserting the most recently retained transcript when output backends recover.
+Use `sttctl status` to inspect `has_retained_transcript` and `last_output_error_code` before replay.
 
 ## Privacy defaults
 

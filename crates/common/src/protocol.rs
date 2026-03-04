@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const ERR_PROTOCOL_VERSION: &str = "ERR_PROTOCOL_VERSION";
 pub const ERR_OUTPUT_BACKEND_UNAVAILABLE: &str = "ERR_OUTPUT_BACKEND_UNAVAILABLE";
+pub const ERR_OUTPUT_BACKEND_FAILED: &str = "ERR_OUTPUT_BACKEND_FAILED";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestEnvelope {
@@ -26,6 +27,7 @@ pub enum Command {
     PttPress,
     PttRelease,
     ToggleContinuous,
+    ReplayLastTranscript,
     Status,
     Shutdown,
 }
@@ -94,6 +96,10 @@ pub struct StatusPayload {
     pub protocol_version: u16,
     pub cooldown_remaining_seconds: u32,
     pub requests_in_last_minute: usize,
+    #[serde(default)]
+    pub has_retained_transcript: bool,
+    #[serde(default)]
+    pub last_output_error_code: Option<String>,
 }
 
 #[must_use]
@@ -123,11 +129,27 @@ mod tests {
             protocol_version: 1,
             cooldown_remaining_seconds: 0,
             requests_in_last_minute: 0,
+            has_retained_transcript: false,
+            last_output_error_code: None,
         }));
         let json = serde_json::to_string(&res).expect("serialize response");
         let de: ResponseEnvelope = serde_json::from_str(&json).expect("deserialize response");
         assert_eq!(de.protocol_version, 1);
         assert!(matches!(de.result, ResponseKind::Ok(Response::Status(_))));
+    }
+
+    #[test]
+    fn legacy_status_payload_without_retained_field_is_compatible() {
+        let json = r#"{
+          "state":"idle",
+          "protocol_version":1,
+          "cooldown_remaining_seconds":0,
+          "requests_in_last_minute":0
+        }"#;
+
+        let payload: StatusPayload = serde_json::from_str(json).expect("deserialize legacy status");
+        assert!(!payload.has_retained_transcript);
+        assert!(payload.last_output_error_code.is_none());
     }
 
     #[test]

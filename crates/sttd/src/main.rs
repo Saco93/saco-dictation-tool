@@ -4,7 +4,10 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use clap::Parser;
-use common::{Config, protocol::DictationState};
+use common::{
+    Config,
+    protocol::{DictationState, ERR_OUTPUT_BACKEND_FAILED, ERR_OUTPUT_BACKEND_UNAVAILABLE},
+};
 use tokio::{
     sync::{Mutex, broadcast},
     time::MissedTickBehavior,
@@ -63,6 +66,8 @@ async fn main() -> anyhow::Result<()> {
         .context("startup model capability validation failed")?;
 
     let injector = Injector::new(config.injection.clone());
+    let replay_handler: Arc<dyn server::ReplayHandler> =
+        Arc::new(server::InjectorReplayHandler::new(injector.clone()));
     let recorder = DebugWavRecorder::new(config.debug_wav.clone());
     let audio_capture =
         AudioCapture::open(&config.audio).context("failed to initialize audio capture device")?;
@@ -110,7 +115,15 @@ async fn main() -> anyhow::Result<()> {
         run_runtime_worker(worker_runtime, &mut worker_shutdown).await;
     });
 
-    if let Err(err) = server::run(&config.ipc, &socket_path, state, shutdown_rx).await {
+    if let Err(err) = server::run(
+        &config.ipc,
+        &socket_path,
+        state,
+        Some(replay_handler),
+        shutdown_rx,
+    )
+    .await
+    {
         error!(error = %err, "ipc server exited with error");
         let _ = shutdown_tx.send(());
         return Err(err).context("ipc server failed");
@@ -329,9 +342,17 @@ async fn process_samples(runtime: &RuntimeDeps, pcm16_audio: Vec<i16>, source: U
 }
 
 async fn record_output_failure(runtime: &RuntimeDeps, transcript: &str, err: InjectionError) {
-    warn!(error = %err, "failed to output transcript; retaining in memory for retry");
+    let error_code = match err {
+        InjectionError::BackendUnavailable => ERR_OUTPUT_BACKEND_UNAVAILABLE,
+        InjectionError::BackendFailed { .. } => ERR_OUTPUT_BACKEND_FAILED,
+    };
+    warn!(
+        error = %err,
+        error_code,
+        "failed to output transcript; retaining in memory for retry"
+    );
     let mut state = runtime.state.lock().await;
-    state.set_last_transcript(transcript.to_string());
+    state.set_last_transcript_with_error(transcript.to_string(), error_code);
 }
 
 fn init_tracing() {

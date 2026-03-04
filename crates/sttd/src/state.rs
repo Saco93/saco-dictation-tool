@@ -34,6 +34,7 @@ pub struct StateMachine {
     guardrails: GuardrailsConfig,
     monthly_spend_usd: f32,
     last_transcript: Option<String>,
+    last_output_error_code: Option<String>,
 }
 
 impl StateMachine {
@@ -49,6 +50,7 @@ impl StateMachine {
             guardrails,
             monthly_spend_usd: 0.0,
             last_transcript: None,
+            last_output_error_code: None,
         }
     }
 
@@ -130,6 +132,8 @@ impl StateMachine {
             protocol_version: PROTOCOL_VERSION,
             cooldown_remaining_seconds: self.cooldown_remaining_seconds(),
             requests_in_last_minute: self.requests_last_minute.len(),
+            has_retained_transcript: self.last_transcript.is_some(),
+            last_output_error_code: self.last_output_error_code.clone(),
         })
     }
 
@@ -169,11 +173,34 @@ impl StateMachine {
 
     pub fn set_last_transcript(&mut self, transcript: String) {
         self.last_transcript = Some(transcript);
+        self.last_output_error_code = None;
+    }
+
+    pub fn set_last_transcript_with_error(&mut self, transcript: String, error_code: &str) {
+        self.last_transcript = Some(transcript);
+        self.last_output_error_code = Some(error_code.to_string());
     }
 
     #[must_use]
     pub fn take_last_transcript(&mut self) -> Option<String> {
         self.last_transcript.take()
+    }
+
+    pub fn restore_last_transcript_if_absent(&mut self, transcript: String) -> bool {
+        if self.last_transcript.is_some() {
+            return false;
+        }
+        self.last_transcript = Some(transcript);
+        true
+    }
+
+    pub fn set_last_output_error_code(&mut self, code: Option<String>) {
+        self.last_output_error_code = code;
+    }
+
+    #[must_use]
+    pub fn has_last_transcript(&self) -> bool {
+        self.last_transcript.is_some()
     }
 
     #[must_use]
@@ -279,5 +306,26 @@ mod tests {
             .mark_transcription_request()
             .expect_err("third should fail");
         assert!(matches!(err, StateError::RateLimitExceeded));
+    }
+
+    #[test]
+    fn retained_transcript_error_is_reported_and_can_be_cleared() {
+        let mut sm = StateMachine::new(guardrails());
+        sm.set_last_transcript_with_error("retry me".to_string(), "ERR_OUTPUT_BACKEND_UNAVAILABLE");
+
+        let status = sm.status().expect("status should succeed");
+        assert!(status.has_retained_transcript);
+        assert_eq!(
+            status.last_output_error_code.as_deref(),
+            Some("ERR_OUTPUT_BACKEND_UNAVAILABLE")
+        );
+
+        let retained = sm.take_last_transcript();
+        assert_eq!(retained.as_deref(), Some("retry me"));
+        sm.set_last_output_error_code(None);
+
+        let status = sm.status().expect("status should succeed");
+        assert!(!status.has_retained_transcript);
+        assert!(status.last_output_error_code.is_none());
     }
 }

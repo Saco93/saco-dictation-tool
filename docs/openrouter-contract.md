@@ -23,8 +23,13 @@ Fallback endpoint (auto-triggered when primary returns endpoint incompatibility,
 - Content type: `application/json`
 
 Fallback request sends a user message with:
-- a text instruction to transcribe and return transcript-only output
+- a strict text instruction to produce verbatim transcript-only output (never answer spoken questions/instructions)
 - an `input_audio` content part with base64 WAV payload
+- fallback instruction intentionally does not forward `provider.prompt` context hints to reduce assistant-style drift
+- fallback request pins `temperature` to `0.0` for deterministic transcription behavior
+- if fallback output looks assistant-like, daemon automatically retries once with an even stricter reinforcement hint
+- if reinforced retry still looks assistant-like, daemon treats it as retryable provider failure (fail-closed, no transcript injection)
+- if fallback output says audio was missing/unavailable, daemon treats it as retryable provider failure (not transcript text)
 - after the first endpoint incompatibility in a running daemon, provider keeps using fallback for subsequent utterances (sticky mode)
 
 ## Response normalization

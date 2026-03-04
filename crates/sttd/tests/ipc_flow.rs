@@ -1,16 +1,60 @@
 #![allow(unused_crate_dependencies)]
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
+use async_trait::async_trait;
 use common::{
     config::{GuardrailsConfig, IpcConfig},
-    protocol::{Command, RequestEnvelope, Response, ResponseKind},
+    protocol::{Command, ERR_OUTPUT_BACKEND_UNAVAILABLE, RequestEnvelope, Response, ResponseKind},
 };
 use sttd::{
-    ipc::{send_request, server},
+    injection::{InjectionError, InjectionResult},
+    ipc::{
+        send_request,
+        server::{self, ReplayHandler},
+    },
     state::StateMachine,
 };
 use tokio::sync::{Mutex, broadcast};
+
+#[derive(Clone, Debug)]
+struct MockReplayHandler {
+    fail: Arc<AtomicBool>,
+}
+
+impl MockReplayHandler {
+    fn new() -> Self {
+        Self {
+            fail: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn set_fail(&self, fail: bool) {
+        self.fail.store(fail, Ordering::Relaxed);
+    }
+}
+
+#[async_trait]
+impl ReplayHandler for MockReplayHandler {
+    async fn replay(&self, _transcript: &str) -> Result<InjectionResult, InjectionError> {
+        if self.fail.load(Ordering::Relaxed) {
+            return Err(InjectionError::BackendUnavailable);
+        }
+
+        Ok(InjectionResult {
+            backend: "mock-replay",
+            inserted: true,
+            requires_manual_paste: false,
+        })
+    }
+}
 
 #[tokio::test]
 async fn ipc_commands_follow_expected_flow() {
@@ -32,12 +76,24 @@ async fn ipc_commands_follow_expected_flow() {
         allow_over_limit: false,
     })));
 
+    let replay_handler = Arc::new(MockReplayHandler::new());
+    let replay_handler_obj: Arc<dyn ReplayHandler> = replay_handler.clone();
+
     let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
     let task = tokio::spawn({
         let state = state.clone();
         let socket_path: PathBuf = socket_path.clone();
         let ipc_cfg = ipc_cfg.clone();
-        async move { server::run(&ipc_cfg, &socket_path, state, shutdown_rx).await }
+        async move {
+            server::run(
+                &ipc_cfg,
+                &socket_path,
+                state,
+                Some(replay_handler_obj),
+                shutdown_rx,
+            )
+            .await
+        }
     });
 
     wait_for_socket(&socket_path).await;
@@ -73,6 +129,104 @@ async fn ipc_commands_follow_expected_flow() {
     .await
     .expect("toggle request while processing");
     assert!(matches!(toggle.result, ResponseKind::Err(_)));
+    {
+        let mut state_guard = state.lock().await;
+        state_guard.finish_processing();
+    }
+
+    {
+        let mut state_guard = state.lock().await;
+        state_guard.set_last_transcript_with_error(
+            "hello retained transcript".to_string(),
+            ERR_OUTPUT_BACKEND_UNAVAILABLE,
+        );
+    }
+    let status_with_retained = send_request(&socket_path, &RequestEnvelope::new(Command::Status))
+        .await
+        .expect("status request with retained transcript");
+    match status_with_retained.result {
+        ResponseKind::Ok(Response::Status(payload)) => {
+            assert!(payload.has_retained_transcript);
+            assert_eq!(
+                payload.last_output_error_code.as_deref(),
+                Some(ERR_OUTPUT_BACKEND_UNAVAILABLE)
+            );
+        }
+        other => panic!("expected status payload, got {other:?}"),
+    }
+
+    let replay = send_request(
+        &socket_path,
+        &RequestEnvelope::new(Command::ReplayLastTranscript),
+    )
+    .await
+    .expect("replay request");
+    assert!(matches!(
+        replay.result,
+        ResponseKind::Ok(Response::Ack { .. })
+    ));
+    {
+        let mut state_guard = state.lock().await;
+        assert!(state_guard.take_last_transcript().is_none());
+    }
+    let status_after_replay = send_request(&socket_path, &RequestEnvelope::new(Command::Status))
+        .await
+        .expect("status request after replay");
+    match status_after_replay.result {
+        ResponseKind::Ok(Response::Status(payload)) => {
+            assert!(!payload.has_retained_transcript);
+            assert!(payload.last_output_error_code.is_none());
+        }
+        other => panic!("expected status payload, got {other:?}"),
+    }
+
+    let replay_empty = send_request(
+        &socket_path,
+        &RequestEnvelope::new(Command::ReplayLastTranscript),
+    )
+    .await
+    .expect("replay request with no retained transcript");
+    assert!(matches!(
+        replay_empty.result,
+        ResponseKind::Ok(Response::Ack { .. })
+    ));
+
+    {
+        let mut state_guard = state.lock().await;
+        state_guard.set_last_transcript("retry me".to_string());
+    }
+    replay_handler.set_fail(true);
+    let replay_fail = send_request(
+        &socket_path,
+        &RequestEnvelope::new(Command::ReplayLastTranscript),
+    )
+    .await
+    .expect("failed replay request");
+    match replay_fail.result {
+        ResponseKind::Err(err) => {
+            assert_eq!(err.code, ERR_OUTPUT_BACKEND_UNAVAILABLE);
+            assert!(err.retryable);
+        }
+        other => panic!("expected replay error response, got {other:?}"),
+    }
+    {
+        let state_guard = state.lock().await;
+        assert!(state_guard.has_last_transcript());
+    }
+    let status_after_failed_replay =
+        send_request(&socket_path, &RequestEnvelope::new(Command::Status))
+            .await
+            .expect("status request after failed replay");
+    match status_after_failed_replay.result {
+        ResponseKind::Ok(Response::Status(payload)) => {
+            assert!(payload.has_retained_transcript);
+            assert_eq!(
+                payload.last_output_error_code.as_deref(),
+                Some(ERR_OUTPUT_BACKEND_UNAVAILABLE)
+            );
+        }
+        other => panic!("expected status payload, got {other:?}"),
+    }
 
     let shutdown = send_request(&socket_path, &RequestEnvelope::new(Command::Shutdown))
         .await

@@ -26,6 +26,7 @@ enum Commands {
     PttPress,
     PttRelease,
     ToggleContinuous,
+    ReplayLastTranscript,
     Status,
     Shutdown,
 }
@@ -45,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::PttPress => Command::PttPress,
         Commands::PttRelease => Command::PttRelease,
         Commands::ToggleContinuous => Command::ToggleContinuous,
+        Commands::ReplayLastTranscript => Command::ReplayLastTranscript,
         Commands::Status => Command::Status,
         Commands::Shutdown => Command::Shutdown,
     };
@@ -64,12 +66,15 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         ResponseKind::Ok(Response::Status(status)) => {
+            let last_output_error_code = status.last_output_error_code.as_deref().unwrap_or("none");
             println!(
-                "state={:?} protocol_version={} cooldown_remaining_seconds={} requests_in_last_minute={}",
+                "state={:?} protocol_version={} cooldown_remaining_seconds={} requests_in_last_minute={} has_retained_transcript={} last_output_error_code={}",
                 status.state,
                 status.protocol_version,
                 status.cooldown_remaining_seconds,
-                status.requests_in_last_minute
+                status.requests_in_last_minute,
+                status.has_retained_transcript,
+                last_output_error_code
             );
             Ok(())
         }
