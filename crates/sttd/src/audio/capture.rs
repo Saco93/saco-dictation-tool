@@ -31,6 +31,19 @@ pub enum AudioCaptureError {
     NoSamples,
 }
 
+impl AudioCaptureError {
+    #[must_use]
+    pub fn is_recoverable_input_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::NoInputDevice
+                | Self::InputDeviceNotFound(_)
+                | Self::Enumerate(_)
+                | Self::QueryConfig(_)
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AudioCapture {
     pub device_name: String,

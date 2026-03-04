@@ -6,7 +6,10 @@ use anyhow::Context;
 use clap::Parser;
 use common::{
     Config,
-    protocol::{DictationState, ERR_OUTPUT_BACKEND_FAILED, ERR_OUTPUT_BACKEND_UNAVAILABLE},
+    protocol::{
+        DictationState, ERR_AUDIO_INPUT_UNAVAILABLE, ERR_OUTPUT_BACKEND_FAILED,
+        ERR_OUTPUT_BACKEND_UNAVAILABLE,
+    },
 };
 use tokio::{
     sync::{Mutex, broadcast},
@@ -37,7 +40,7 @@ struct RuntimeDeps {
     provider: Arc<dyn SttProvider>,
     injector: Injector,
     recorder: DebugWavRecorder,
-    audio_capture: AudioCapture,
+    audio_capture: Arc<Mutex<Option<AudioCapture>>>,
     state: Arc<Mutex<StateMachine>>,
 }
 
@@ -65,15 +68,26 @@ async fn main() -> anyhow::Result<()> {
     let replay_handler: Arc<dyn server::ReplayHandler> =
         Arc::new(server::InjectorReplayHandler::new(injector.clone()));
     let recorder = DebugWavRecorder::new(config.debug_wav.clone());
-    let audio_capture =
-        AudioCapture::open(&config.audio).context("failed to initialize audio capture device")?;
-
-    info!(
-        device = %audio_capture.device_name,
-        sample_rate_hz = audio_capture.sample_rate_hz,
-        channels = audio_capture.channels,
-        "audio capture device initialized"
-    );
+    let (initial_audio_capture, startup_audio_error) = match AudioCapture::open(&config.audio) {
+        Ok(capture) => {
+            info!(
+                device = %capture.device_name,
+                sample_rate_hz = capture.sample_rate_hz,
+                channels = capture.channels,
+                "audio capture device initialized"
+            );
+            (Some(capture), None)
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                error_code = ERR_AUDIO_INPUT_UNAVAILABLE,
+                configured_device = ?config.audio.input_device,
+                "audio capture device unavailable at startup; daemon will keep running and retry on capture"
+            );
+            (None, Some(err))
+        }
+    };
 
     if recorder.is_enabled() {
         info!(
@@ -83,12 +97,17 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let state = Arc::new(Mutex::new(StateMachine::new(config.guardrails.clone())));
+    if startup_audio_error.is_some() {
+        let mut guard = state.lock().await;
+        guard.set_last_audio_error_code(Some(ERR_AUDIO_INPUT_UNAVAILABLE.to_string()));
+    }
+
     let runtime = Arc::new(RuntimeDeps {
         config: config.clone(),
         provider,
         injector,
         recorder,
-        audio_capture,
+        audio_capture: Arc::new(Mutex::new(initial_audio_capture)),
         state: state.clone(),
     });
 
@@ -253,11 +272,103 @@ async fn process_continuous_cycle(
 }
 
 async fn capture_audio(runtime: &RuntimeDeps, duration_ms: u32) -> anyhow::Result<Vec<i16>> {
-    let capture = runtime.audio_capture.clone();
-    tokio::task::spawn_blocking(move || capture.capture_for_duration(duration_ms))
+    let capture = {
+        let guard = runtime.audio_capture.lock().await;
+        guard.clone()
+    };
+
+    let capture = if let Some(capture) = capture {
+        capture
+    } else {
+        let audio_cfg = runtime.config.audio.clone();
+        let opened = tokio::task::spawn_blocking(move || AudioCapture::open(&audio_cfg))
+            .await
+            .context("audio capture open task join failed")?;
+
+        match opened {
+            Ok(capture) => {
+                info!(
+                    device = %capture.device_name,
+                    sample_rate_hz = capture.sample_rate_hz,
+                    channels = capture.channels,
+                    "audio capture device recovered"
+                );
+                {
+                    let mut guard = runtime.audio_capture.lock().await;
+                    *guard = Some(capture.clone());
+                }
+                {
+                    let mut state = runtime.state.lock().await;
+                    state.set_last_audio_error_code(None);
+                }
+                capture
+            }
+            Err(err) => {
+                let first_unavailable = {
+                    let mut state = runtime.state.lock().await;
+                    let first = !state.has_last_audio_error_code();
+                    state.set_last_audio_error_code(Some(ERR_AUDIO_INPUT_UNAVAILABLE.to_string()));
+                    first
+                };
+                if first_unavailable {
+                    warn!(
+                        error = %err,
+                        error_code = ERR_AUDIO_INPUT_UNAVAILABLE,
+                        "audio capture device still unavailable; daemon remains responsive and will retry"
+                    );
+                } else {
+                    debug!(
+                        error = %err,
+                        error_code = ERR_AUDIO_INPUT_UNAVAILABLE,
+                        "audio capture device still unavailable; retrying"
+                    );
+                }
+                return Err(anyhow::anyhow!(err)).context("audio capture unavailable");
+            }
+        }
+    };
+
+    let result = tokio::task::spawn_blocking(move || capture.capture_for_duration(duration_ms))
         .await
-        .context("audio capture task join failed")?
-        .context("audio capture failed")
+        .context("audio capture task join failed")?;
+
+    match result {
+        Ok(samples) => {
+            let mut state = runtime.state.lock().await;
+            state.set_last_audio_error_code(None);
+            Ok(samples)
+        }
+        Err(err) => {
+            if err.is_recoverable_input_failure() {
+                {
+                    let mut guard = runtime.audio_capture.lock().await;
+                    *guard = None;
+                }
+                let first_unavailable = {
+                    let mut state = runtime.state.lock().await;
+                    let first = !state.has_last_audio_error_code();
+                    state.set_last_audio_error_code(Some(ERR_AUDIO_INPUT_UNAVAILABLE.to_string()));
+                    first
+                };
+                if first_unavailable {
+                    warn!(
+                        error = %err,
+                        error_code = ERR_AUDIO_INPUT_UNAVAILABLE,
+                        "audio capture input unavailable; will retry on next capture attempt"
+                    );
+                } else {
+                    debug!(
+                        error = %err,
+                        error_code = ERR_AUDIO_INPUT_UNAVAILABLE,
+                        "audio capture input unavailable; retrying"
+                    );
+                }
+            } else {
+                warn!(error = %err, "audio capture attempt failed");
+            }
+            Err(anyhow::anyhow!(err)).context("audio capture failed")
+        }
+    }
 }
 
 async fn process_samples(runtime: &RuntimeDeps, pcm16_audio: Vec<i16>, source: UtteranceSource) {

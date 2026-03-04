@@ -67,14 +67,16 @@ async fn main() -> anyhow::Result<()> {
         }
         ResponseKind::Ok(Response::Status(status)) => {
             let last_output_error_code = status.last_output_error_code.as_deref().unwrap_or("none");
+            let last_audio_error_code = status.last_audio_error_code.as_deref().unwrap_or("none");
             println!(
-                "state={:?} protocol_version={} cooldown_remaining_seconds={} requests_in_last_minute={} has_retained_transcript={} last_output_error_code={}",
+                "state={:?} protocol_version={} cooldown_remaining_seconds={} requests_in_last_minute={} has_retained_transcript={} last_output_error_code={} last_audio_error_code={}",
                 status.state,
                 status.protocol_version,
                 status.cooldown_remaining_seconds,
                 status.requests_in_last_minute,
                 status.has_retained_transcript,
-                last_output_error_code
+                last_output_error_code,
+                last_audio_error_code
             );
             Ok(())
         }

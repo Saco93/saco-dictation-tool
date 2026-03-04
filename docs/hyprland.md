@@ -66,6 +66,7 @@ journalctl --user -u whisper-server.service -f
 - `ERR_PROTOCOL_VERSION`: client and daemon protocol versions differ.
 - `ERR_OUTPUT_BACKEND_UNAVAILABLE`: install `wtype` or `wl-copy`, or change output mode.
 - retained transcript replay: run `sttctl status` and check `has_retained_transcript=true`; if `last_output_error_code=ERR_OUTPUT_BACKEND_UNAVAILABLE`, restore output tooling then run `sttctl replay-last-transcript`.
+- input device unavailable: `last_audio_error_code=ERR_AUDIO_INPUT_UNAVAILABLE` means daemon stayed alive but capture device/backend was unavailable; restore PipeWire/ALSA device availability or fix `STTD_INPUT_DEVICE`, then retry capture.
 - provider mode mismatch: verify `STTD_PROVIDER_KIND` (env) and `[provider].kind` (toml) are aligned.
 - openrouter auth/provider failures: verify `STTD_OPENROUTER_API_KEY` when `STTD_PROVIDER_KIND=openrouter`.
 - whisper_local failures: verify `STTD_WHISPER_CMD` is installed and `STTD_WHISPER_MODEL_PATH` exists.

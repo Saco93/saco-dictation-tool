@@ -55,7 +55,8 @@ cargo run -p sttctl -- replay-last-transcript
 ```
 
 `replay-last-transcript` retries inserting the most recently retained transcript when output backends recover.
-Use `sttctl status` to inspect `has_retained_transcript` and `last_output_error_code` before replay.
+Use `sttctl status` to inspect `has_retained_transcript`, `last_output_error_code`, and `last_audio_error_code` before replay.
+When `last_audio_error_code=ERR_AUDIO_INPUT_UNAVAILABLE`, daemon is still running but capture input is currently unavailable; fix microphone/backend availability and retry dictation.
 
 ## Privacy defaults
 

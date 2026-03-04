@@ -4,6 +4,7 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const ERR_PROTOCOL_VERSION: &str = "ERR_PROTOCOL_VERSION";
 pub const ERR_OUTPUT_BACKEND_UNAVAILABLE: &str = "ERR_OUTPUT_BACKEND_UNAVAILABLE";
 pub const ERR_OUTPUT_BACKEND_FAILED: &str = "ERR_OUTPUT_BACKEND_FAILED";
+pub const ERR_AUDIO_INPUT_UNAVAILABLE: &str = "ERR_AUDIO_INPUT_UNAVAILABLE";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestEnvelope {
@@ -100,6 +101,8 @@ pub struct StatusPayload {
     pub has_retained_transcript: bool,
     #[serde(default)]
     pub last_output_error_code: Option<String>,
+    #[serde(default)]
+    pub last_audio_error_code: Option<String>,
 }
 
 #[must_use]
@@ -131,6 +134,7 @@ mod tests {
             requests_in_last_minute: 0,
             has_retained_transcript: false,
             last_output_error_code: None,
+            last_audio_error_code: None,
         }));
         let json = serde_json::to_string(&res).expect("serialize response");
         let de: ResponseEnvelope = serde_json::from_str(&json).expect("deserialize response");
@@ -150,6 +154,7 @@ mod tests {
         let payload: StatusPayload = serde_json::from_str(json).expect("deserialize legacy status");
         assert!(!payload.has_retained_transcript);
         assert!(payload.last_output_error_code.is_none());
+        assert!(payload.last_audio_error_code.is_none());
     }
 
     #[test]

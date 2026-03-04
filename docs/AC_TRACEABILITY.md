@@ -27,10 +27,10 @@ Status legend:
 | AC11 | PASS | `protocol::tests::version_compatibility_guard` | Protocol mismatch guard verified. |
 | AC12 | PARTIAL | `rate_limit_is_enforced`; `provider_cooldown_blocks_new_commands_until_elapsed` | Soft-spend closure evidence remains incomplete. |
 | AC13 | PARTIAL | `config/sttd.service`; operations docs | Login-session startup evidence remains manual/operational. |
-| AC14 | OPEN | EPIC-3/STORY-2 backlog | Recoverable configured input-device behavior not closed. |
+| AC14 | PASS | `daemon_stays_up_when_configured_input_device_is_unavailable` | Invalid configured input device now reports `ERR_AUDIO_INPUT_UNAVAILABLE` via status while daemon remains responsive. |
 | AC15 | OPEN | EPIC-3/STORY-3 backlog | Stricter startup capability validation still open. |
 
 ## Release-Gate Conclusion
 
-1. AC14 and AC15 remain open and block final production-readiness sign-off.
+1. AC15 remains open and blocks final production-readiness sign-off.
 2. AC7, AC9, AC10, AC12, and AC13 require stronger closure evidence.

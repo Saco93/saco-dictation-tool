@@ -35,6 +35,7 @@ pub struct StateMachine {
     monthly_spend_usd: f32,
     last_transcript: Option<String>,
     last_output_error_code: Option<String>,
+    last_audio_error_code: Option<String>,
 }
 
 impl StateMachine {
@@ -51,6 +52,7 @@ impl StateMachine {
             monthly_spend_usd: 0.0,
             last_transcript: None,
             last_output_error_code: None,
+            last_audio_error_code: None,
         }
     }
 
@@ -134,6 +136,7 @@ impl StateMachine {
             requests_in_last_minute: self.requests_last_minute.len(),
             has_retained_transcript: self.last_transcript.is_some(),
             last_output_error_code: self.last_output_error_code.clone(),
+            last_audio_error_code: self.last_audio_error_code.clone(),
         })
     }
 
@@ -196,6 +199,15 @@ impl StateMachine {
 
     pub fn set_last_output_error_code(&mut self, code: Option<String>) {
         self.last_output_error_code = code;
+    }
+
+    pub fn set_last_audio_error_code(&mut self, code: Option<String>) {
+        self.last_audio_error_code = code;
+    }
+
+    #[must_use]
+    pub fn has_last_audio_error_code(&self) -> bool {
+        self.last_audio_error_code.is_some()
     }
 
     #[must_use]
@@ -319,6 +331,7 @@ mod tests {
             status.last_output_error_code.as_deref(),
             Some("ERR_OUTPUT_BACKEND_UNAVAILABLE")
         );
+        assert!(status.last_audio_error_code.is_none());
 
         let retained = sm.take_last_transcript();
         assert_eq!(retained.as_deref(), Some("retry me"));
@@ -327,5 +340,22 @@ mod tests {
         let status = sm.status().expect("status should succeed");
         assert!(!status.has_retained_transcript);
         assert!(status.last_output_error_code.is_none());
+        assert!(status.last_audio_error_code.is_none());
+    }
+
+    #[test]
+    fn audio_capture_error_status_is_reported_and_can_be_cleared() {
+        let mut sm = StateMachine::new(guardrails());
+        sm.set_last_audio_error_code(Some("ERR_AUDIO_INPUT_UNAVAILABLE".to_string()));
+
+        let status = sm.status().expect("status should succeed");
+        assert_eq!(
+            status.last_audio_error_code.as_deref(),
+            Some("ERR_AUDIO_INPUT_UNAVAILABLE")
+        );
+
+        sm.set_last_audio_error_code(None);
+        let status = sm.status().expect("status should succeed");
+        assert!(status.last_audio_error_code.is_none());
     }
 }
