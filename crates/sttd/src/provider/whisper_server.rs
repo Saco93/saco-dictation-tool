@@ -300,11 +300,30 @@ impl SttProvider for WhisperServerProvider {
             return self.probe_inference_readiness().await;
         }
 
-        self.client
+        let response = self
+            .client
             .get(self.base_url.clone())
             .send()
             .await
             .map_err(|e| ProviderError::DependencyUnavailable(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|err| format!("<failed to read response body: {err}>"));
+            let normalized_body = if body.trim().is_empty() {
+                "<empty response body>".to_string()
+            } else {
+                body
+            };
+            return Err(ProviderError::DependencyUnavailable(format!(
+                "whisper_server base endpoint '{}' returned status {} during startup validation: {}",
+                self.base_url,
+                status.as_u16(),
+                normalized_body
+            )));
+        }
 
         Ok(())
     }

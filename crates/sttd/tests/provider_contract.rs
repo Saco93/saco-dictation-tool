@@ -783,7 +783,9 @@ sample_rate_hz = 16000
         .await
         .expect_err("blank language should fail startup validation");
 
-    assert!(matches!(err, ProviderError::IncompatibleModel(reason) if reason.contains("non-empty")));
+    assert!(
+        matches!(err, ProviderError::IncompatibleModel(reason) if reason.contains("non-empty"))
+    );
 }
 
 #[tokio::test]
@@ -862,7 +864,46 @@ sample_rate_hz = 16000
         .await
         .expect_err("unsupported language should fail startup");
 
-    assert!(matches!(err, ProviderError::IncompatibleModel(reason) if reason.contains("rejected configured language")));
+    assert!(
+        matches!(err, ProviderError::IncompatibleModel(reason) if reason.contains("rejected configured language"))
+    );
+}
+
+#[tokio::test]
+async fn whisper_server_validation_without_probe_rejects_non_success_base_status() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+        .mount(&server)
+        .await;
+
+    let raw = format!(
+        r#"
+[provider]
+kind = "whisper_server"
+base_url = "{}"
+model = "tiny"
+capability_probe = false
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        server.uri()
+    );
+
+    let cfg = Config::load_from_toml_for_test(&raw, &HashMap::new()).expect("load config");
+    let provider = WhisperServerProvider::new(&cfg).expect("build whisper-server provider");
+    let err = provider
+        .validate_model_capability()
+        .await
+        .expect_err("non-success base endpoint should fail startup validation");
+
+    assert!(
+        matches!(err, ProviderError::DependencyUnavailable(reason) if reason.contains("status 404"))
+    );
 }
 
 #[tokio::test]

@@ -141,13 +141,13 @@ impl WhisperLocalProvider {
         std::env::temp_dir().join(format!("sttd-whisper-{pid}-{nonce}-{seq}"))
     }
 
-    fn txt_path_for_prefix(prefix: &PathBuf) -> PathBuf {
-        let mut with_suffix: OsString = prefix.clone().into_os_string();
+    fn txt_path_for_prefix(prefix: &Path) -> PathBuf {
+        let mut with_suffix: OsString = prefix.as_os_str().to_os_string();
         with_suffix.push(".txt");
         PathBuf::from(with_suffix)
     }
 
-    async fn cleanup(wav_path: &PathBuf, txt_path: &PathBuf) {
+    async fn cleanup(wav_path: &Path, txt_path: &Path) {
         let _ = fs::remove_file(wav_path).await;
         let _ = fs::remove_file(txt_path).await;
     }
@@ -283,24 +283,27 @@ impl SttProvider for WhisperLocalProvider {
             command.arg("-nt");
         }
 
-        let output = timeout(self.timeout, command.output())
-            .await
-            .map_err(|_| {
-                ProviderError::Execution(format!(
-                    "local whisper command timed out after {} ms",
-                    self.timeout.as_millis()
-                ))
-            })?
-            .map_err(|err| {
-                if err.kind() == ErrorKind::NotFound {
+        let output = match timeout(self.timeout, command.output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(err)) => {
+                Self::cleanup(&wav_path, &txt_path).await;
+                return Err(if err.kind() == ErrorKind::NotFound {
                     ProviderError::DependencyUnavailable(format!(
                         "local whisper binary `{}` is not installed",
                         self.whisper_cmd
                     ))
                 } else {
                     ProviderError::Execution(err.to_string())
-                }
-            })?;
+                });
+            }
+            Err(_) => {
+                Self::cleanup(&wav_path, &txt_path).await;
+                return Err(ProviderError::Execution(format!(
+                    "local whisper command timed out after {} ms",
+                    self.timeout.as_millis()
+                )));
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -312,15 +315,24 @@ impl SttProvider for WhisperLocalProvider {
             )));
         }
 
-        let transcript_raw = fs::read_to_string(&txt_path).await.map_err(|err| {
-            ProviderError::Execution(format!(
-                "local whisper did not produce transcript output `{}`: {err}",
-                txt_path.display()
-            ))
-        })?;
+        let transcript_raw = match fs::read_to_string(&txt_path).await {
+            Ok(content) => content,
+            Err(err) => {
+                Self::cleanup(&wav_path, &txt_path).await;
+                return Err(ProviderError::Execution(format!(
+                    "local whisper did not produce transcript output `{}`: {err}",
+                    txt_path.display()
+                )));
+            }
+        };
 
-        let transcript =
-            Self::normalize_transcript(&transcript_raw).ok_or(ProviderError::MissingTranscript)?;
+        let transcript = match Self::normalize_transcript(&transcript_raw) {
+            Some(transcript) => transcript,
+            None => {
+                Self::cleanup(&wav_path, &txt_path).await;
+                return Err(ProviderError::MissingTranscript);
+            }
+        };
 
         debug!(
             transcript_chars = transcript.len(),
