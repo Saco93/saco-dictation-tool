@@ -96,3 +96,4 @@ systemctl --user status whisper-server.service
 - [Acceptance criteria traceability](docs/AC_TRACEABILITY.md)
 - [Release go/no-go checklist](docs/release-go-no-go-checklist.md)
 - [AC13 manual verification evidence](docs/verification/ac13-systemd-user-service-2026-03-04.md)
+- [AC1/AC6/AC10/AC12 closure evidence](docs/verification/ac1-ac6-ac10-ac12-closure-2026-03-04.md)

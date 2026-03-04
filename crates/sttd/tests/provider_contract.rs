@@ -1,6 +1,13 @@
 #![allow(unused_crate_dependencies)]
 
-use std::{collections::HashMap, fs};
+use std::{
+    collections::HashMap,
+    fs,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use common::Config;
 use sttd::provider::{
@@ -11,9 +18,33 @@ use sttd::provider::{
 };
 use tempfile::tempdir;
 use wiremock::{
-    Mock, MockServer, ResponseTemplate,
+    Mock, MockServer, Request, Respond, ResponseTemplate,
     matchers::{body_string_contains, method, path},
 };
+
+#[derive(Clone, Debug)]
+struct AuthThenSuccessResponder {
+    calls: Arc<AtomicUsize>,
+}
+
+impl AuthThenSuccessResponder {
+    fn new(calls: Arc<AtomicUsize>) -> Self {
+        Self { calls }
+    }
+}
+
+impl Respond for AuthThenSuccessResponder {
+    fn respond(&self, _request: &Request) -> ResponseTemplate {
+        let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call_index == 0 {
+            return ResponseTemplate::new(401).set_body_string("invalid api key");
+        }
+
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "transcript": "transcript after auth remediation"
+        }))
+    }
+}
 
 #[tokio::test]
 async fn openrouter_request_matches_contract_and_normalizes_response() {
@@ -672,6 +703,172 @@ sample_rate_hz = 16000
         .expect_err("request should fail");
 
     assert!(matches!(err, ProviderError::RateLimited));
+}
+
+#[tokio::test]
+async fn openrouter_auth_failure_is_mapped_to_typed_auth_error() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/audio/transcriptions"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("invalid api key"))
+        .mount(&server)
+        .await;
+
+    let raw = format!(
+        r#"
+[provider]
+base_url = "{}/api/v1"
+model = "openai/whisper-1"
+openrouter_api_key = "sk-invalid"
+capability_probe = false
+max_retries = 0
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        server.uri()
+    );
+
+    let cfg = Config::load_from_toml_for_test(&raw, &HashMap::new()).expect("load config");
+    let provider = OpenRouterProvider::new(&cfg).expect("build provider");
+    let request = default_request_for_config(&cfg, vec![0_i16; 100]);
+
+    let err = provider
+        .transcribe_utterance(request)
+        .await
+        .expect_err("auth failure should be surfaced");
+
+    assert!(matches!(err, ProviderError::Auth));
+}
+
+#[tokio::test]
+async fn openrouter_can_transcribe_after_auth_failure_on_subsequent_request() {
+    let server = MockServer::start().await;
+    let call_counter = Arc::new(AtomicUsize::new(0));
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/audio/transcriptions"))
+        .respond_with(AuthThenSuccessResponder::new(call_counter.clone()))
+        .mount(&server)
+        .await;
+
+    let raw = format!(
+        r#"
+[provider]
+base_url = "{}/api/v1"
+model = "openai/whisper-1"
+openrouter_api_key = "sk-test"
+capability_probe = false
+max_retries = 0
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        server.uri()
+    );
+
+    let cfg = Config::load_from_toml_for_test(&raw, &HashMap::new()).expect("load config");
+    let provider = OpenRouterProvider::new(&cfg).expect("build provider");
+
+    let first = provider
+        .transcribe_utterance(default_request_for_config(&cfg, vec![0_i16; 100]))
+        .await
+        .expect_err("first request should fail auth");
+    assert!(matches!(first, ProviderError::Auth));
+
+    let second = provider
+        .transcribe_utterance(default_request_for_config(&cfg, vec![0_i16; 100]))
+        .await
+        .expect("second request should succeed");
+    assert_eq!(second.transcript, "transcript after auth remediation");
+
+    assert_eq!(
+        call_counter.load(Ordering::SeqCst),
+        2,
+        "provider should remain usable for subsequent requests"
+    );
+}
+
+#[tokio::test]
+async fn openrouter_request_reflects_model_and_language_after_restart_with_new_config() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/audio/transcriptions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "transcript": "ok"
+        })))
+        .mount(&server)
+        .await;
+
+    let raw_first = format!(
+        r#"
+[provider]
+base_url = "{}/api/v1"
+model = "openai/whisper-1"
+language = "en"
+openrouter_api_key = "sk-test"
+capability_probe = false
+max_retries = 0
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        server.uri()
+    );
+    let cfg_first =
+        Config::load_from_toml_for_test(&raw_first, &HashMap::new()).expect("load first config");
+    let provider_first = OpenRouterProvider::new(&cfg_first).expect("build first provider");
+    provider_first
+        .transcribe_utterance(default_request_for_config(&cfg_first, vec![0_i16; 100]))
+        .await
+        .expect("first request should succeed");
+
+    let raw_second = format!(
+        r#"
+[provider]
+base_url = "{}/api/v1"
+model = "openai/gpt-4o-transcribe"
+language = "zh"
+openrouter_api_key = "sk-test"
+capability_probe = false
+max_retries = 0
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        server.uri()
+    );
+    let cfg_second = Config::load_from_toml_for_test(&raw_second, &HashMap::new())
+        .expect("load second config");
+    let provider_second = OpenRouterProvider::new(&cfg_second).expect("build second provider");
+    provider_second
+        .transcribe_utterance(default_request_for_config(&cfg_second, vec![0_i16; 100]))
+        .await
+        .expect("second request should succeed");
+
+    let received = server
+        .received_requests()
+        .await
+        .expect("request recording enabled");
+    assert_eq!(received.len(), 2);
+
+    let first_body = String::from_utf8_lossy(&received[0].body);
+    assert!(first_body.contains("name=\"model\""));
+    assert!(first_body.contains("openai/whisper-1"));
+    assert!(first_body.contains("name=\"language\""));
+    assert!(first_body.contains("en"));
+
+    let second_body = String::from_utf8_lossy(&received[1].body);
+    assert!(second_body.contains("name=\"model\""));
+    assert!(second_body.contains("openai/gpt-4o-transcribe"));
+    assert!(second_body.contains("name=\"language\""));
+    assert!(second_body.contains("zh"));
 }
 
 #[tokio::test]

@@ -46,8 +46,19 @@ fn release_checklist_keeps_blocking_gate_statuses_explicit() {
     }
 
     assert!(
-        checklist.contains("Current Decision: CONDITIONAL GO")
-            || checklist.contains("Current Decision: GO"),
-        "release checklist must contain explicit GO or CONDITIONAL GO decision"
+        checklist.contains("Current Decision: GO"),
+        "release checklist must contain explicit GO decision for full AC closure"
     );
+}
+
+#[test]
+fn release_checklist_marks_all_acs_as_pass() {
+    let checklist = read_repo_file("docs/release-go-no-go-checklist.md");
+    for ac in 1..=15 {
+        let pass_row = format!("| AC{ac} | PASS |");
+        assert!(
+            checklist.contains(&pass_row),
+            "release checklist must mark AC{ac} as PASS",
+        );
+    }
 }
