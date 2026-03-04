@@ -140,7 +140,7 @@ impl OpenRouterProvider {
 
     fn model_looks_audio_capable(model: &str) -> bool {
         let m = model.to_ascii_lowercase();
-        ["whisper", "audio", "speech", "stt"]
+        ["whisper", "audio", "speech", "stt", "transcribe", "asr"]
             .iter()
             .any(|needle| m.contains(needle))
     }
@@ -542,10 +542,10 @@ impl OpenRouterProvider {
 impl SttProvider for OpenRouterProvider {
     async fn validate_model_capability(&self) -> Result<(), ProviderError> {
         if !Self::model_looks_audio_capable(&self.model) {
-            warn!(
-                model = %self.model,
-                "model id does not match STT naming heuristic; continuing and deferring compatibility to provider responses"
-            );
+            return Err(ProviderError::IncompatibleModel(format!(
+                "configured model '{}' does not look speech-to-text capable; choose an STT/audio model id",
+                self.model
+            )));
         }
 
         if self
@@ -561,6 +561,11 @@ impl SttProvider for OpenRouterProvider {
         if self.capability_probe {
             self.probe_model_availability().await?;
             debug!(contract = CONTRACT_ID, "capability probe succeeded");
+        } else {
+            debug!(
+                contract = CONTRACT_ID,
+                "capability probe disabled; using strict model-id compatibility validation only"
+            );
         }
 
         Ok(())

@@ -70,5 +70,6 @@ journalctl --user -u whisper-server.service -f
 - provider mode mismatch: verify `STTD_PROVIDER_KIND` (env) and `[provider].kind` (toml) are aligned.
 - openrouter auth/provider failures: verify `STTD_OPENROUTER_API_KEY` when `STTD_PROVIDER_KIND=openrouter`.
 - whisper_local failures: verify `STTD_WHISPER_CMD` is installed and `STTD_WHISPER_MODEL_PATH` exists.
-- whisper_server failures: verify `STTD_PROVIDER_BASE_URL` and `whisper-server.service` status/logs.
+- startup capability validation failure: startup now fails fast when provider model/language contract is incompatible; check configured `language`, model choice/path, and provider-specific startup probe logs.
+- whisper_server failures: verify `STTD_PROVIDER_BASE_URL`, `/inference` readiness, and `whisper-server.service` status/logs.
 - socket not reachable: check `${XDG_RUNTIME_DIR}` and service logs.

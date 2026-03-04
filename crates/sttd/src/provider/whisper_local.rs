@@ -1,7 +1,7 @@
 use std::{
     ffi::OsString,
     io::ErrorKind,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -151,6 +151,57 @@ impl WhisperLocalProvider {
         let _ = fs::remove_file(wav_path).await;
         let _ = fs::remove_file(txt_path).await;
     }
+
+    fn normalized_language(language: &str) -> Option<String> {
+        let normalized = language.trim().to_ascii_lowercase().replace('_', "-");
+        if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized)
+        }
+    }
+
+    fn is_english_language(language: &str) -> bool {
+        language == "en" || language.starts_with("en-")
+    }
+
+    fn model_path_looks_english_only(path: &Path) -> bool {
+        let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
+            return false;
+        };
+        let lowered = filename.to_ascii_lowercase();
+        lowered.contains(".en.") || lowered.contains(".en-") || lowered.contains(".en_")
+    }
+
+    fn enforce_model_language_compatibility(&self) -> Result<(), ProviderError> {
+        if self
+            .default_language
+            .as_deref()
+            .is_some_and(|language| language.trim().is_empty())
+        {
+            return Err(ProviderError::IncompatibleModel(
+                "language must be non-empty when provided".to_string(),
+            ));
+        }
+
+        let requested_language = self
+            .default_language
+            .as_deref()
+            .and_then(Self::normalized_language);
+
+        if let Some(language) = requested_language
+            && Self::model_path_looks_english_only(&self.model_path)
+            && !Self::is_english_language(&language)
+        {
+            return Err(ProviderError::IncompatibleModel(format!(
+                "whisper model '{}' appears English-only but provider.language='{}'; use an English language code or a multilingual model file",
+                self.model_path.display(),
+                language
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -182,6 +233,8 @@ impl SttProvider for WhisperLocalProvider {
                 self.model_path.display()
             )));
         }
+
+        self.enforce_model_language_compatibility()?;
 
         Ok(())
     }

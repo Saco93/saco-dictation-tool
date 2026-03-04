@@ -28,9 +28,9 @@ Status legend:
 | AC12 | PARTIAL | `rate_limit_is_enforced`; `provider_cooldown_blocks_new_commands_until_elapsed` | Soft-spend closure evidence remains incomplete. |
 | AC13 | PARTIAL | `config/sttd.service`; operations docs | Login-session startup evidence remains manual/operational. |
 | AC14 | PASS | `daemon_stays_up_when_configured_input_device_is_unavailable` | Invalid configured input device now reports `ERR_AUDIO_INPUT_UNAVAILABLE` via status while daemon remains responsive. |
-| AC15 | OPEN | EPIC-3/STORY-3 backlog | Stricter startup capability validation still open. |
+| AC15 | PASS | `openrouter_startup_validation_rejects_non_audio_model`; `whisper_local_startup_validation_rejects_en_model_with_non_english_language`; `whisper_server_startup_probe_rejects_unsupported_language` | Startup now fails fast on incompatible provider model/language contracts before capture begins. |
 
 ## Release-Gate Conclusion
 
-1. AC15 remains open and blocks final production-readiness sign-off.
-2. AC7, AC9, AC10, AC12, and AC13 require stronger closure evidence.
+1. AC15 is closed with explicit automated startup validation evidence.
+2. AC7, AC9, AC10, AC12, and AC13 still require stronger closure evidence.

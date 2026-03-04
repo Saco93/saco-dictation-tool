@@ -1,13 +1,15 @@
 #![allow(unused_crate_dependencies)]
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fs};
 
 use common::Config;
 use sttd::provider::{
     ProviderError, SttProvider,
     openrouter::{OpenRouterProvider, default_request_for_config},
+    whisper_local::WhisperLocalProvider,
     whisper_server::WhisperServerProvider,
 };
+use tempfile::tempdir;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{body_string_contains, method, path},
@@ -670,6 +672,197 @@ sample_rate_hz = 16000
         .expect_err("request should fail");
 
     assert!(matches!(err, ProviderError::RateLimited));
+}
+
+#[tokio::test]
+async fn openrouter_startup_validation_rejects_non_audio_model() {
+    let raw = r#"
+[provider]
+model = "google/gemini-2.5-flash-lite"
+openrouter_api_key = "sk-test"
+capability_probe = false
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#;
+
+    let cfg = Config::load_from_toml_for_test(raw, &HashMap::new()).expect("load config");
+    let provider = OpenRouterProvider::new(&cfg).expect("build provider");
+    let err = provider
+        .validate_model_capability()
+        .await
+        .expect_err("non-audio model should fail startup validation");
+
+    assert!(
+        matches!(err, ProviderError::IncompatibleModel(reason) if reason.contains("does not look speech-to-text capable"))
+    );
+}
+
+#[tokio::test]
+async fn openrouter_startup_validation_accepts_transcribe_named_model() {
+    let raw = r#"
+[provider]
+model = "openai/gpt-4o-transcribe"
+openrouter_api_key = "sk-test"
+capability_probe = false
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#;
+
+    let cfg = Config::load_from_toml_for_test(raw, &HashMap::new()).expect("load config");
+    let provider = OpenRouterProvider::new(&cfg).expect("build provider");
+    provider
+        .validate_model_capability()
+        .await
+        .expect("transcribe-named model should pass strict startup heuristic");
+}
+
+#[tokio::test]
+async fn whisper_local_startup_validation_rejects_en_model_with_non_english_language() {
+    let dir = tempdir().expect("temp dir");
+    let model_path = dir.path().join("ggml-small.en-q5_1.bin");
+    fs::write(&model_path, b"fake-model").expect("create fake model");
+
+    let raw = format!(
+        r#"
+[provider]
+kind = "whisper_local"
+model = "unused"
+language = "zh"
+whisper_cmd = "sh"
+whisper_model_path = "{}"
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        model_path.display()
+    );
+
+    let cfg = Config::load_from_toml_for_test(&raw, &HashMap::new()).expect("load config");
+    let provider = WhisperLocalProvider::new(&cfg).expect("build whisper-local provider");
+    let err = provider
+        .validate_model_capability()
+        .await
+        .expect_err("english-only model path should reject non-english language");
+
+    assert!(
+        matches!(err, ProviderError::IncompatibleModel(reason) if reason.contains("English-only") && reason.contains("provider.language"))
+    );
+}
+
+#[tokio::test]
+async fn whisper_local_startup_validation_rejects_blank_language_string() {
+    let dir = tempdir().expect("temp dir");
+    let model_path = dir.path().join("ggml-small.en-q5_1.bin");
+    fs::write(&model_path, b"fake-model").expect("create fake model");
+
+    let raw = format!(
+        r#"
+[provider]
+kind = "whisper_local"
+model = "unused"
+language = "   "
+whisper_cmd = "sh"
+whisper_model_path = "{}"
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        model_path.display()
+    );
+
+    let cfg = Config::load_from_toml_for_test(&raw, &HashMap::new()).expect("load config");
+    let provider = WhisperLocalProvider::new(&cfg).expect("build whisper-local provider");
+    let err = provider
+        .validate_model_capability()
+        .await
+        .expect_err("blank language should fail startup validation");
+
+    assert!(matches!(err, ProviderError::IncompatibleModel(reason) if reason.contains("non-empty")));
+}
+
+#[tokio::test]
+async fn whisper_server_startup_probe_uses_inference_endpoint() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/inference"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "text": "ready"
+        })))
+        .mount(&server)
+        .await;
+
+    let raw = format!(
+        r#"
+[provider]
+kind = "whisper_server"
+base_url = "{}"
+model = "tiny"
+language = "en"
+capability_probe = true
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        server.uri()
+    );
+
+    let cfg = Config::load_from_toml_for_test(&raw, &HashMap::new()).expect("load config");
+    let provider = WhisperServerProvider::new(&cfg).expect("build whisper-server provider");
+    provider
+        .validate_model_capability()
+        .await
+        .expect("startup probe should pass");
+
+    let received = server
+        .received_requests()
+        .await
+        .expect("request recording enabled");
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].url.path(), "/inference");
+}
+
+#[tokio::test]
+async fn whisper_server_startup_probe_rejects_unsupported_language() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/inference"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("language 'zh' not supported"))
+        .mount(&server)
+        .await;
+
+    let raw = format!(
+        r#"
+[provider]
+kind = "whisper_server"
+base_url = "{}"
+model = "tiny"
+language = "zh"
+capability_probe = true
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+"#,
+        server.uri()
+    );
+
+    let cfg = Config::load_from_toml_for_test(&raw, &HashMap::new()).expect("load config");
+    let provider = WhisperServerProvider::new(&cfg).expect("build whisper-server provider");
+    let err = provider
+        .validate_model_capability()
+        .await
+        .expect_err("unsupported language should fail startup");
+
+    assert!(matches!(err, ProviderError::IncompatibleModel(reason) if reason.contains("rejected configured language")));
 }
 
 #[tokio::test]

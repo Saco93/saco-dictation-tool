@@ -38,6 +38,11 @@ yay -S whisper.cpp whisper.cpp-model-small.en-q5_1
 - `STTD_PROVIDER_KIND=whisper_server` for persistent local inference (lower per-request overhead)
 - `STTD_PROVIDER_KIND=openrouter` plus `STTD_OPENROUTER_API_KEY` for remote OpenRouter STT
 
+Startup now performs strict provider capability validation before capture starts:
+- `openrouter`: model ID must be speech/audio-capable; optional catalog probe runs when `capability_probe=true`.
+- `whisper_local`: `.en`-only model files require an English `language` configuration.
+- `whisper_server`: when `capability_probe=true`, daemon probes `/inference` readiness and rejects unsupported language contracts at startup.
+
 6. Run daemon:
 
 ```bash

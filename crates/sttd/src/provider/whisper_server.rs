@@ -13,9 +13,11 @@ use super::{ProviderError, SttProvider, TranscribeRequest, TranscribeResponse};
 pub struct WhisperServerProvider {
     client: Client,
     base_url: String,
+    model: String,
     default_language: Option<String>,
     default_prompt: Option<String>,
     max_retries: u32,
+    capability_probe: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,9 +50,11 @@ impl WhisperServerProvider {
         Ok(Self {
             client,
             base_url,
+            model: config.provider.model.clone(),
             default_language: config.provider.language.clone(),
             default_prompt: config.provider.prompt.clone(),
             max_retries: config.provider.max_retries,
+            capability_probe: config.provider.capability_probe,
         })
     }
 
@@ -129,6 +133,92 @@ impl WhisperServerProvider {
         wav
     }
 
+    fn looks_like_unsupported_language_error(body: &str) -> bool {
+        let lowered = body.to_ascii_lowercase();
+        let mentions_language = lowered.contains("language") || lowered.contains("lang");
+        let indicates_unsupported = lowered.contains("unsupported")
+            || lowered.contains("not supported")
+            || lowered.contains("invalid")
+            || lowered.contains("unknown");
+        mentions_language && indicates_unsupported
+    }
+
+    async fn probe_inference_readiness(&self) -> Result<(), ProviderError> {
+        let probe_request = TranscribeRequest {
+            model: self.model.clone(),
+            language: self.default_language.clone(),
+            prompt: None,
+            temperature: None,
+            pcm16_audio: vec![0_i16; 1_600],
+            sample_rate_hz: 16_000,
+        };
+        let wav = Self::wav_from_pcm16(&probe_request.pcm16_audio, probe_request.sample_rate_hz);
+
+        let mut form = multipart::Form::new().part(
+            "file",
+            multipart::Part::bytes(wav)
+                .file_name("startup-probe.wav")
+                .mime_str("audio/wav")
+                .map_err(|err| ProviderError::InvalidResponse(err.to_string()))?,
+        );
+
+        if let Some(language) = self.resolve_language(&probe_request) {
+            form = form.text("language", language.to_string());
+        }
+
+        let response = self
+            .client
+            .post(self.inference_endpoint())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|err| ProviderError::DependencyUnavailable(err.to_string()))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|err| ProviderError::DependencyUnavailable(err.to_string()))?;
+
+        if status.is_success() {
+            return Ok(());
+        }
+
+        let normalized_body = if body.trim().is_empty() {
+            "<empty response body>".to_string()
+        } else {
+            body
+        };
+
+        if status.is_client_error() {
+            if Self::looks_like_unsupported_language_error(&normalized_body) {
+                let language = self
+                    .default_language
+                    .clone()
+                    .unwrap_or_else(|| "<unspecified>".to_string());
+                return Err(ProviderError::IncompatibleModel(format!(
+                    "whisper_server inference endpoint rejected configured language '{}': {}",
+                    language, normalized_body
+                )));
+            }
+
+            if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
+                return Err(ProviderError::DependencyUnavailable(format!(
+                    "whisper_server inference endpoint '{}' is unavailable (status {}): {}",
+                    self.inference_endpoint(),
+                    status.as_u16(),
+                    normalized_body
+                )));
+            }
+        }
+
+        Err(ProviderError::DependencyUnavailable(format!(
+            "whisper_server startup inference probe failed with status {}: {}",
+            status.as_u16(),
+            normalized_body
+        )))
+    }
+
     async fn post_inference(
         &self,
         request: &TranscribeRequest,
@@ -196,6 +286,20 @@ impl WhisperServerProvider {
 #[async_trait]
 impl SttProvider for WhisperServerProvider {
     async fn validate_model_capability(&self) -> Result<(), ProviderError> {
+        if self
+            .default_language
+            .as_deref()
+            .is_some_and(|language| language.trim().is_empty())
+        {
+            return Err(ProviderError::IncompatibleModel(
+                "language must be non-empty when provided".to_string(),
+            ));
+        }
+
+        if self.capability_probe {
+            return self.probe_inference_readiness().await;
+        }
+
         self.client
             .get(self.base_url.clone())
             .send()
