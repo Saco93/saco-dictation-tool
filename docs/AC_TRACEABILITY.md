@@ -32,5 +32,6 @@ Status legend:
 
 ## Release-Gate Conclusion
 
-1. AC15 is closed with explicit automated startup validation evidence.
-2. AC10 and AC12 still require stronger closure evidence.
+1. Blocking release gates for EPIC-3 are closed: AC8, AC14, AC15 are all `PASS`.
+2. Final release checklist and decision snapshot: [docs/release-go-no-go-checklist.md](/home/saco/Projects/Rust/saco-dictation-tool/master/docs/release-go-no-go-checklist.md).
+3. Current release decision: `CONDITIONAL GO` (advisory partials remain at AC1/AC6/AC10/AC12).

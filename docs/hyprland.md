@@ -64,6 +64,9 @@ journalctl --user -u whisper-server.service -f
 Recorded AC13 startup evidence:
 - [`docs/verification/ac13-systemd-user-service-2026-03-04.md`](/home/saco/Projects/Rust/saco-dictation-tool/master/docs/verification/ac13-systemd-user-service-2026-03-04.md)
 
+Release decision checklist:
+- [`docs/release-go-no-go-checklist.md`](/home/saco/Projects/Rust/saco-dictation-tool/master/docs/release-go-no-go-checklist.md)
+
 ## Troubleshooting
 
 - `ERR_PROTOCOL_VERSION`: client and daemon protocol versions differ.
