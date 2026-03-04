@@ -1,0 +1,59 @@
+[provider]
+base_url = "https://openrouter.ai/api/v1"
+model = "openai/whisper-1"
+language = "en"
+prompt = ""
+# Optional. If omitted, defaults to provider-side behavior.
+# temperature = 0.0
+timeout_ms = 20000
+max_retries = 2
+# Startup validation still runs locally; probe can be enabled for extra strictness.
+capability_probe = false
+env_file_path = "${XDG_CONFIG_HOME:-~/.config}/sttd/sttd.env"
+
+[audio]
+# Leave empty to use default input device.
+# input_device = "alsa_input.pci-0000_00_1f.3.analog-stereo"
+sample_rate_hz = 16000
+channels = 1
+frame_ms = 20
+max_utterance_ms = 30000
+max_payload_bytes = 1500000
+
+[vad]
+start_threshold_dbfs = -38.0
+end_silence_ms = 700
+min_speech_ms = 250
+max_utterance_ms = 30000
+
+[guardrails]
+max_requests_per_minute = 30
+max_continuous_minutes = 30
+provider_error_cooldown_seconds = 10
+# Optional per-request estimate used for monthly soft-spend accounting.
+estimated_request_cost_usd = 0.0
+# Optional soft-limit. Set to a positive number to enable warnings/blocking.
+# monthly_soft_spend_limit_usd = 20.0
+allow_over_limit = false
+
+[injection]
+# type | clipboard | clipboard_autopaste
+output_mode = "type"
+clipboard_autopaste = false
+wtype_cmd = "wtype"
+wl_copy_cmd = "wl-copy"
+
+[debug_wav]
+enabled = false
+directory = "${XDG_CACHE_HOME:-~/.cache}/sttd/debug-wav"
+ttl_hours = 24
+size_cap_mb = 100
+
+[ipc]
+socket_path = "${XDG_RUNTIME_DIR}/sttd/sttd.sock"
+socket_dir_mode = 448
+socket_file_mode = 384
+
+[privacy]
+redact_transcript_in_logs = true
+persist_transcripts = false

@@ -1,0 +1,21 @@
+[Unit]
+Description=sttd daemon (Hyprland-native speech-to-text)
+After=graphical-session.target
+Wants=graphical-session.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/sttd/sttd.env
+ExecStart=/usr/bin/env sttd --config %h/.config/sttd/sttd.toml
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=%h/.config/sttd %h/.cache/sttd %t/sttd
+
+[Install]
+WantedBy=default.target
