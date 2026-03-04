@@ -2,6 +2,10 @@
 
 Contract ID: `openrouter-stt-contract-v0.2`
 
+Scope:
+- This contract applies only when `provider.kind=openrouter` (or `STTD_PROVIDER_KIND=openrouter`).
+- For `whisper_local` and `whisper_server` operation flows, see `README.md` and `docs/hyprland.md`.
+
 ## Request mapping
 
 Primary endpoint:

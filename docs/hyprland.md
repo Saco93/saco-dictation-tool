@@ -51,10 +51,23 @@ systemctl --user status sttd.service
 journalctl --user -u sttd.service -f
 ```
 
+If `STTD_PROVIDER_KIND=whisper_server`, also run:
+
+```bash
+cp config/whisper-server.service ~/.config/systemd/user/whisper-server.service
+systemctl --user daemon-reload
+systemctl --user enable --now whisper-server.service
+systemctl --user status whisper-server.service
+journalctl --user -u whisper-server.service -f
+```
+
 ## Troubleshooting
 
 - `ERR_PROTOCOL_VERSION`: client and daemon protocol versions differ.
 - `ERR_OUTPUT_BACKEND_UNAVAILABLE`: install `wtype` or `wl-copy`, or change output mode.
 - retained transcript replay: run `sttctl status` and check `has_retained_transcript=true`; if `last_output_error_code=ERR_OUTPUT_BACKEND_UNAVAILABLE`, restore output tooling then run `sttctl replay-last-transcript`.
-- auth/provider failures: verify `STTD_OPENROUTER_API_KEY` in env file.
+- provider mode mismatch: verify `STTD_PROVIDER_KIND` (env) and `[provider].kind` (toml) are aligned.
+- openrouter auth/provider failures: verify `STTD_OPENROUTER_API_KEY` when `STTD_PROVIDER_KIND=openrouter`.
+- whisper_local failures: verify `STTD_WHISPER_CMD` is installed and `STTD_WHISPER_MODEL_PATH` exists.
+- whisper_server failures: verify `STTD_PROVIDER_BASE_URL` and `whisper-server.service` status/logs.
 - socket not reachable: check `${XDG_RUNTIME_DIR}` and service logs.

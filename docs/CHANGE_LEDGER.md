@@ -65,3 +65,7 @@ Result: passed.
 1. Add migration notice + upgrade checklist for existing OpenRouter users.
 2. Add focused tests for `whisper_local` failure/cleanup behavior.
 3. Strengthen `whisper_server` startup capability probe to verify inference readiness (not only base URL reachability).
+
+## Related Tracking
+
+1. Acceptance closure status is tracked in `docs/AC_TRACEABILITY.md`.

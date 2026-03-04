@@ -86,3 +86,5 @@ systemctl --user status whisper-server.service
 
 - [OpenRouter adapter contract](docs/openrouter-contract.md)
 - [Hyprland integration guide](docs/hyprland.md)
+- [Provider-mode change ledger](docs/CHANGE_LEDGER.md)
+- [Acceptance criteria traceability](docs/AC_TRACEABILITY.md)
