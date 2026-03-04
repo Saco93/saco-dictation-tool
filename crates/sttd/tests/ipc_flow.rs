@@ -12,7 +12,10 @@ use std::{
 use async_trait::async_trait;
 use common::{
     config::{GuardrailsConfig, IpcConfig},
-    protocol::{Command, ERR_OUTPUT_BACKEND_UNAVAILABLE, RequestEnvelope, Response, ResponseKind},
+    protocol::{
+        Command, ERR_OUTPUT_BACKEND_UNAVAILABLE, ERR_PROTOCOL_VERSION, PROTOCOL_VERSION,
+        RequestEnvelope, Response, ResponseKind,
+    },
 };
 use sttd::{
     injection::{InjectionError, InjectionResult},
@@ -97,6 +100,23 @@ async fn ipc_commands_follow_expected_flow() {
     });
 
     wait_for_socket(&socket_path).await;
+
+    let incompatible = send_request(
+        &socket_path,
+        &RequestEnvelope {
+            protocol_version: PROTOCOL_VERSION + 1,
+            command: Command::Status,
+        },
+    )
+    .await
+    .expect("protocol mismatch request");
+    match incompatible.result {
+        ResponseKind::Err(err) => {
+            assert_eq!(err.code, ERR_PROTOCOL_VERSION);
+            assert!(!err.retryable);
+        }
+        ResponseKind::Ok(ok) => panic!("expected protocol mismatch error, got ok={ok:?}"),
+    }
 
     let press = send_request(&socket_path, &RequestEnvelope::new(Command::PttPress))
         .await
@@ -207,7 +227,7 @@ async fn ipc_commands_follow_expected_flow() {
             assert_eq!(err.code, ERR_OUTPUT_BACKEND_UNAVAILABLE);
             assert!(err.retryable);
         }
-        other => panic!("expected replay error response, got {other:?}"),
+        ResponseKind::Ok(ok) => panic!("expected replay error response, got ok={ok:?}"),
     }
     {
         let state_guard = state.lock().await;

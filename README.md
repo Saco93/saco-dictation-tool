@@ -94,3 +94,4 @@ systemctl --user status whisper-server.service
 - [Hyprland integration guide](docs/hyprland.md)
 - [Provider-mode change ledger](docs/CHANGE_LEDGER.md)
 - [Acceptance criteria traceability](docs/AC_TRACEABILITY.md)
+- [AC13 manual verification evidence](docs/verification/ac13-systemd-user-service-2026-03-04.md)

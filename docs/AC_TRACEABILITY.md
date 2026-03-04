@@ -20,17 +20,17 @@ Status legend:
 | AC4 | PASS | `toggle_continuous_is_idempotent`; `push_to_talk_and_continuous_modes_remain_exclusive` | Continuous mode behavior covered. |
 | AC5 | PASS | `audio::capture::tests::emits_utterance_after_silence` | VAD segmentation behavior covered. |
 | AC6 | PARTIAL | Config/env override tests in `common::config` | Config loading covered; mode+language behavior verification still needed. |
-| AC7 | PARTIAL | Injection fallback logic in `injection/mod.rs`; replay/error IPC coverage | Missing targeted automated test for `wtype` unavailable -> clipboard fallback success path. |
+| AC7 | PASS | `injection::tests::type_mode_falls_back_to_clipboard_when_wtype_is_unavailable` | Targeted fallback path is now explicitly verified (`wtype` unavailable -> clipboard success + manual-paste semantics). |
 | AC8 | PASS | `ipc_commands_follow_expected_flow` | Retained-transcript replay semantics are covered in IPC flow tests. |
-| AC9 | PARTIAL | Debug WAV module exists | Missing explicit acceptance tests for disabled/enabled retention behavior. |
+| AC9 | PASS | `debug_wav::tests::disabled_debug_wav_never_writes_files`; `debug_wav::tests::enabled_debug_wav_prunes_stale_and_oversize_artifacts` | Disabled path and enabled retention cleanup behavior now have direct automated evidence. |
 | AC10 | PARTIAL | Provider non-2xx mapping tests | Explicit invalid/missing credential acceptance evidence should be added. |
-| AC11 | PASS | `protocol::tests::version_compatibility_guard` | Protocol mismatch guard verified. |
+| AC11 | PASS | `protocol::tests::version_compatibility_guard`; `ipc_commands_follow_expected_flow` (incompatible request assertion) | Compatibility guard is verified at both protocol utility and daemon IPC runtime levels. |
 | AC12 | PARTIAL | `rate_limit_is_enforced`; `provider_cooldown_blocks_new_commands_until_elapsed` | Soft-spend closure evidence remains incomplete. |
-| AC13 | PARTIAL | `config/sttd.service`; operations docs | Login-session startup evidence remains manual/operational. |
+| AC13 | PASS | `systemd_service::sttd_service_contains_required_startup_contract`; `docs/verification/ac13-systemd-user-service-2026-03-04.md` | Service contract is statically verified and manual user-session startup evidence is now recorded with command/output logs. |
 | AC14 | PASS | `daemon_stays_up_when_configured_input_device_is_unavailable` | Invalid configured input device now reports `ERR_AUDIO_INPUT_UNAVAILABLE` via status while daemon remains responsive. |
 | AC15 | PASS | `openrouter_startup_validation_rejects_non_audio_model`; `whisper_local_startup_validation_rejects_en_model_with_non_english_language`; `whisper_server_startup_probe_rejects_unsupported_language` | Startup now fails fast on incompatible provider model/language contracts before capture begins. |
 
 ## Release-Gate Conclusion
 
 1. AC15 is closed with explicit automated startup validation evidence.
-2. AC7, AC9, AC10, AC12, and AC13 still require stronger closure evidence.
+2. AC10 and AC12 still require stronger closure evidence.

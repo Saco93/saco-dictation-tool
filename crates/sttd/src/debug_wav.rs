@@ -119,3 +119,74 @@ impl DebugWavRecorder {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{fs::OpenOptions, time::Duration};
+
+    use tempfile::tempdir;
+
+    use super::DebugWavRecorder;
+    use common::config::DebugWavConfig;
+
+    #[tokio::test]
+    async fn disabled_debug_wav_never_writes_files() {
+        let temp = tempdir().expect("tempdir");
+        let recorder = DebugWavRecorder::new(DebugWavConfig {
+            enabled: false,
+            directory: temp.path().display().to_string(),
+            ttl_hours: 24,
+            size_cap_mb: 10,
+        });
+
+        let output = recorder
+            .maybe_write(temp.path(), &[1, 2, 3, 4], 16_000)
+            .await
+            .expect("disabled write path should succeed");
+        assert!(output.is_none());
+        assert_eq!(
+            std::fs::read_dir(temp.path())
+                .expect("list output dir")
+                .count(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn enabled_debug_wav_prunes_stale_and_oversize_artifacts() {
+        let temp = tempdir().expect("tempdir");
+        let stale = temp.path().join("stale.wav");
+        std::fs::write(&stale, vec![1_u8; 16]).expect("write stale file");
+        let stale_file = OpenOptions::new()
+            .write(true)
+            .open(&stale)
+            .expect("open stale file");
+        stale_file
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(2 * 3_600))
+            .expect("set stale modified time");
+
+        let oversized = temp.path().join("oversized.wav");
+        std::fs::write(&oversized, vec![2_u8; 2 * 1_024 * 1_024])
+            .expect("write oversized file");
+
+        let recorder = DebugWavRecorder::new(DebugWavConfig {
+            enabled: true,
+            directory: temp.path().display().to_string(),
+            ttl_hours: 1,
+            size_cap_mb: 1,
+        });
+
+        let written_path = recorder
+            .maybe_write(temp.path(), &[0_i16; 1_600], 16_000)
+            .await
+            .expect("write should succeed")
+            .expect("enabled mode should create wav");
+
+        assert!(written_path.exists(), "new debug wav should remain");
+        assert!(!stale.exists(), "stale artifact should be pruned by TTL");
+        assert!(
+            !oversized.exists(),
+            "oversized artifact should be pruned by size cap"
+        );
+    }
+}
