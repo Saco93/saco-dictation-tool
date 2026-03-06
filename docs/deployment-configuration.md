@@ -40,4 +40,4 @@ systemctl --user status whisper-server.service
 
 ## CI/CD and Infra Scan Result
 
-No `.github/workflows`, `.gitlab-ci.yml`, `Dockerfile`, `k8s`, `terraform` assets were detected in current repository root.
+No `.github/workflows`, `.gitlab-ci.yml`, `Dockerfile`, `k8s`, `terraform`, or other infrastructure-as-code assets were detected in the current repository root.

@@ -1,19 +1,19 @@
 # master - Source Tree Analysis (Exhaustive)
 
-**Date:** 2026-03-05
+**Date:** 2026-03-06
 **Scan Level:** exhaustive
 
 ## Overview
 
-The repository is a Rust workspace monorepo with three production crates plus BMAD workflow assets and generated documentation.
+The repository is a Rust workspace monorepo with three production crates, runtime configuration templates, BMAD workflow assets, and generated project documentation. `README.md` is currently absent from the worktree.
 
 ## Complete Directory Structure (Relevant to Runtime)
 
 ```text
 master/
+├── AGENTS.md
 ├── Cargo.toml
 ├── Cargo.lock
-├── README.md
 ├── config/
 │   ├── sttd.example.toml
 │   ├── sttd.env.example
@@ -61,9 +61,11 @@ master/
 │           └── systemd_service.rs
 ├── docs/
 │   ├── index.md
-│   └── verification/
-└── _bmad/
-    └── ... workflow/agent assets ...
+│   └── ...
+├── _bmad/
+│   └── ... workflow/agent assets ...
+└── target/
+    └── ... build artifacts excluded from analysis ...
 ```
 
 ## Critical Directories
@@ -105,4 +107,4 @@ master/
 - Runtime logic isolated in `sttd` crate.
 - Cross-crate contracts centralized in `common`.
 - Operational policy and startup contracts in `config` templates and tests.
-- Documentation quality gates partially enforced by tests (`release_readiness_docs.rs`).
+- Documentation quality gates are partially enforced by tests (`release_readiness_docs.rs`).

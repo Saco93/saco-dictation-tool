@@ -1,17 +1,20 @@
-# Documentation Validation Report (Exhaustive Rescan)
+# Documentation Validation Report (Initial Exhaustive Scan)
 
-**Date:** 2026-03-05
-**Workflow Mode:** full_rescan
+**Date:** 2026-03-06
+**Workflow Mode:** initial_scan
 **Scan Level:** exhaustive
 
 ## Validation Summary
 
 - State file exists and is valid JSON.
 - Project parts metadata exists and is valid JSON.
-- Master index regenerated and present.
-- Core and part-level documentation files regenerated.
-- Integration/deployment/contribution docs regenerated.
-- Exhaustive scan batches recorded in state file.
+- Master index generated and present.
+- Core and part-level documentation files generated.
+- Integration/deployment/contribution docs generated.
+- Exhaustive scan batches are recorded in state file.
+- Executed `jq empty docs/project-parts.json docs/project-parts-metadata.json docs/project-scan-report.json`.
+- Executed generated-doc link resolution check against `docs/index.md`.
+- Executed `cargo test -p sttd --test systemd_service` successfully.
 
 ## Incomplete Marker Scan
 
@@ -29,7 +32,15 @@ Result: no incomplete markers found.
 ## Link Validation
 
 - Checked markdown links in `docs/index.md` that target local `./` paths.
-- No missing targets detected.
+- No missing targets detected within generated workflow outputs.
+
+## Verification Commands
+
+```bash
+jq empty docs/project-parts.json docs/project-parts-metadata.json docs/project-scan-report.json
+for f in $(rg -o '\(\./[^)]+' docs/index.md | tr -d '(' | sed 's#^\./#docs/#'); do test -e "$f" || echo "$f"; done
+cargo test -p sttd --test systemd_service
+```
 
 ## Coverage Notes
 
@@ -42,8 +53,10 @@ Result: no incomplete markers found.
 
 ## Residual Limitations
 
-- Documentation is code-derived snapshot; runtime behavior can still vary by host audio stack and provider service conditions.
+- Documentation is a code-derived snapshot; runtime behavior can still vary by host audio stack and provider service conditions.
+- `README.md` and other pre-existing repository docs were not present on the current filesystem during the scan.
+- The repository contains a release-doc test (`crates/sttd/tests/release_readiness_docs.rs`) that references additional non-workflow docs not regenerated here.
 
 ## Result
 
-Documentation set is complete for this exhaustive rescan and ready as AI context baseline.
+Documentation set is complete for this initial exhaustive scan and ready as AI context baseline.

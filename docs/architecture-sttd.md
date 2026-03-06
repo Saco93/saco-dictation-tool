@@ -63,7 +63,7 @@ Provider-facing outbound APIs:
 ### IPC Layer
 
 - `ipc/server.rs`: socket lifecycle, command dispatch, replay handling
-- `ipc/mod.rs`: client send_request helper
+- `ipc/mod.rs`: client `send_request` helper
 
 ### Output Injection
 

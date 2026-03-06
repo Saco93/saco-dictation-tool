@@ -1,5 +1,6 @@
 # User Provided Context
 
-- Request: rerun documentation workflow using exhaustive scan depth.
+- Request: document this project using exhaustive scan depth.
 - Additional focus instructions: none.
-- Effective choices applied: Start fresh + full rescan + exhaustive.
+- Effective choices applied: initial scan + exhaustive.
+- Project root used: current working directory (`/home/saco/Projects/Rust/saco-dictation-tool/master`).

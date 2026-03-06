@@ -59,6 +59,6 @@
 
 ## Integration Constraints
 
-- IPC commands requiring idle state (e.g., replay) reject invalid transitions.
+- IPC commands requiring idle state (for example replay) reject invalid transitions.
 - Protocol mismatch returns `ERR_PROTOCOL_VERSION` without processing command.
 - Startup provider capability checks gate daemon readiness.

@@ -2,7 +2,7 @@
 
 - Repository Type: monorepo
 - Root: `/home/saco/Projects/Rust/saco-dictation-tool/master`
-- Scan Mode: `full_rescan`
+- Scan Mode: `initial_scan`
 - Scan Level: `exhaustive`
 - Primary Language: Rust
 - Workspace Tooling: Cargo workspace (`members = [common, sttd, sttctl]`)

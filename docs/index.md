@@ -3,11 +3,11 @@
 **Type:** monorepo with 3 parts
 **Primary Language:** Rust
 **Architecture:** Daemon + CLI + Shared Contract
-**Last Updated:** 2026-03-05 (exhaustive rescan)
+**Last Updated:** 2026-03-06 (initial exhaustive scan)
 
 ## Project Overview
 
-This documentation set was regenerated via exhaustive scan and is intended as the primary retrieval context for AI-assisted maintenance and feature work.
+This documentation set was generated via an initial exhaustive scan and is intended as the primary retrieval context for AI-assisted maintenance and feature work.
 
 ## Project Structure
 
@@ -32,7 +32,7 @@ This documentation set was regenerated via exhaustive scan and is intended as th
 ## Quick Reference
 
 - **Control plane:** Unix socket IPC with protocol envelopes (`common::protocol`)
-- **Provider modes:** openrouter / whisper_local / whisper_server
+- **Provider modes:** `openrouter` / `whisper_local` / `whisper_server`
 - **Recovery paths:** audio input unavailable handling + retained transcript replay
 - **Deployment style:** systemd user services
 
@@ -44,6 +44,7 @@ This documentation set was regenerated via exhaustive scan and is intended as th
 - [Source Tree Analysis](./source-tree-analysis.md)
 - [Technology Stack](./technology-stack.md)
 - [Architecture Patterns](./architecture-patterns.md)
+- [Project Structure](./project-structure.md)
 
 ### sttd
 
@@ -80,14 +81,7 @@ This documentation set was regenerated via exhaustive scan and is intended as th
 
 ## Existing Repository Documentation
 
-- [README](../README.md)
-- [OpenRouter Contract](./openrouter-contract.md)
-- [Hyprland Guide](./hyprland.md)
-- [Change Ledger](./CHANGE_LEDGER.md)
-- [AC Traceability](./AC_TRACEABILITY.md)
-- [Release Go/No-Go Checklist](./release-go-no-go-checklist.md)
-- [Verification AC13](./verification/ac13-systemd-user-service-2026-03-04.md)
-- [Verification AC1/AC6/AC10/AC12](./verification/ac1-ac6-ac10-ac12-closure-2026-03-04.md)
+No pre-existing repository documentation files were present on the current filesystem when this scan started.
 
 ## Getting Started for AI-assisted Work
 

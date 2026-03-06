@@ -1,12 +1,14 @@
 # master - Project Overview (Exhaustive)
 
-**Date:** 2026-03-05
+**Date:** 2026-03-06
 **Type:** monorepo (3 parts)
 **Architecture:** Daemon + CLI + Shared Contract
 
 ## Executive Summary
 
 `saco-dictation-tool` is a Rust workspace delivering a local-first dictation system. `sttd` runs as a daemon handling audio capture and transcription orchestration, `sttctl` provides command-line control, and `common` centralizes configuration/protocol contracts.
+
+Project purpose was inferred from binary descriptions, service unit metadata, and source layout because `README.md` is absent from the current worktree.
 
 ## Project Classification
 
@@ -27,7 +29,7 @@
 ## Architecture Highlights
 
 - Local IPC control plane with versioned envelope contract.
-- Adapter-based provider strategy (OpenRouter, whisper_local, whisper_server).
+- Adapter-based provider strategy (`openrouter`, `whisper_local`, `whisper_server`).
 - Guardrail-rich runtime state machine (rate limit, cooldown, continuous limit, soft-spend controls).
 - Transcript retention + replay flow for output failure recovery.
 
