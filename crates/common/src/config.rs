@@ -20,6 +20,10 @@ const ENV_WHISPER_BEST_OF: &str = "STTD_WHISPER_BEST_OF";
 const ENV_WHISPER_NO_FALLBACK: &str = "STTD_WHISPER_NO_FALLBACK";
 const ENV_WHISPER_NO_TIMESTAMPS: &str = "STTD_WHISPER_NO_TIMESTAMPS";
 const ENV_INPUT_DEVICE: &str = "STTD_INPUT_DEVICE";
+const ENV_PLAYBACK_ENABLED: &str = "STTD_PLAYBACK_ENABLED";
+const ENV_PLAYERCTL_CMD: &str = "STTD_PLAYERCTL_CMD";
+const ENV_PLAYBACK_COMMAND_TIMEOUT_MS: &str = "STTD_PLAYBACK_COMMAND_TIMEOUT_MS";
+const ENV_PLAYBACK_AGGREGATE_TIMEOUT_MS: &str = "STTD_PLAYBACK_AGGREGATE_TIMEOUT_MS";
 const ENV_SOFT_SPEND_LIMIT: &str = "STTD_MONTHLY_SOFT_SPEND_LIMIT_USD";
 const ENV_ESTIMATED_REQUEST_COST: &str = "STTD_ESTIMATED_REQUEST_COST_USD";
 
@@ -44,6 +48,7 @@ pub struct Config {
     pub audio: AudioConfig,
     pub vad: VadConfig,
     pub guardrails: GuardrailsConfig,
+    pub playback: PlaybackConfig,
     pub injection: InjectionConfig,
     pub debug_wav: DebugWavConfig,
     pub ipc: IpcConfig,
@@ -106,6 +111,15 @@ pub struct GuardrailsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct PlaybackConfig {
+    pub enabled: bool,
+    pub playerctl_cmd: String,
+    pub command_timeout_ms: u64,
+    pub aggregate_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct InjectionConfig {
     pub output_mode: String,
     pub clipboard_autopaste: bool,
@@ -144,6 +158,7 @@ impl Default for Config {
             audio: AudioConfig::default(),
             vad: VadConfig::default(),
             guardrails: GuardrailsConfig::default(),
+            playback: PlaybackConfig::default(),
             injection: InjectionConfig::default(),
             debug_wav: DebugWavConfig::default(),
             ipc: IpcConfig::default(),
@@ -223,6 +238,17 @@ impl Default for InjectionConfig {
             clipboard_autopaste: false,
             wtype_cmd: "wtype".to_string(),
             wl_copy_cmd: "wl-copy".to_string(),
+        }
+    }
+}
+
+impl Default for PlaybackConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            playerctl_cmd: "playerctl".to_string(),
+            command_timeout_ms: 400,
+            aggregate_timeout_ms: 1_200,
         }
     }
 }
@@ -378,6 +404,30 @@ impl Config {
         if let Some(v) = pick(ENV_INPUT_DEVICE) {
             self.audio.input_device = Some(v);
         }
+        if let Some(v) = pick(ENV_PLAYBACK_ENABLED) {
+            let parsed = v.parse::<bool>().map_err(|_| ConfigError::InvalidValue {
+                field: "playback.enabled",
+                reason: format!("`{v}` is not a valid bool"),
+            })?;
+            self.playback.enabled = parsed;
+        }
+        if let Some(v) = pick(ENV_PLAYERCTL_CMD) {
+            self.playback.playerctl_cmd = v;
+        }
+        if let Some(v) = pick(ENV_PLAYBACK_COMMAND_TIMEOUT_MS) {
+            let parsed = v.parse::<u64>().map_err(|_| ConfigError::InvalidValue {
+                field: "playback.command_timeout_ms",
+                reason: format!("`{v}` is not a valid unsigned integer"),
+            })?;
+            self.playback.command_timeout_ms = parsed;
+        }
+        if let Some(v) = pick(ENV_PLAYBACK_AGGREGATE_TIMEOUT_MS) {
+            let parsed = v.parse::<u64>().map_err(|_| ConfigError::InvalidValue {
+                field: "playback.aggregate_timeout_ms",
+                reason: format!("`{v}` is not a valid unsigned integer"),
+            })?;
+            self.playback.aggregate_timeout_ms = parsed;
+        }
         if let Some(v) = pick(ENV_API_KEY) {
             self.provider.openrouter_api_key = Some(v);
         }
@@ -505,6 +555,34 @@ impl Config {
             });
         }
 
+        if self.playback.enabled && self.playback.playerctl_cmd.trim().is_empty() {
+            return Err(ConfigError::InvalidValue {
+                field: "playback.playerctl_cmd",
+                reason: "must not be empty when playback.enabled=true".to_string(),
+            });
+        }
+
+        if self.playback.command_timeout_ms == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "playback.command_timeout_ms",
+                reason: "must be greater than 0".to_string(),
+            });
+        }
+
+        if self.playback.aggregate_timeout_ms == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "playback.aggregate_timeout_ms",
+                reason: "must be greater than 0".to_string(),
+            });
+        }
+
+        if self.playback.aggregate_timeout_ms < self.playback.command_timeout_ms {
+            return Err(ConfigError::InvalidValue {
+                field: "playback.aggregate_timeout_ms",
+                reason: "must be >= playback.command_timeout_ms".to_string(),
+            });
+        }
+
         if let Some(limit) = self.guardrails.monthly_soft_spend_limit_usd
             && limit <= 0.0
         {
@@ -550,6 +628,10 @@ fn collect_runtime_env() -> HashMap<String, String> {
         ENV_WHISPER_NO_FALLBACK,
         ENV_WHISPER_NO_TIMESTAMPS,
         ENV_INPUT_DEVICE,
+        ENV_PLAYBACK_ENABLED,
+        ENV_PLAYERCTL_CMD,
+        ENV_PLAYBACK_COMMAND_TIMEOUT_MS,
+        ENV_PLAYBACK_AGGREGATE_TIMEOUT_MS,
         ENV_SOFT_SPEND_LIMIT,
         ENV_ESTIMATED_REQUEST_COST,
         "XDG_CONFIG_HOME",
@@ -663,6 +745,12 @@ provider_error_cooldown_seconds = 10
 estimated_request_cost_usd = 0.0
 allow_over_limit = false
 
+[playback]
+enabled = true
+playerctl_cmd = "playerctl"
+command_timeout_ms = 400
+aggregate_timeout_ms = 1200
+
 [injection]
 output_mode = "type"
 clipboard_autopaste = false
@@ -720,6 +808,57 @@ persist_transcripts = false
         match err {
             ConfigError::InvalidValue { field, .. } => {
                 assert_eq!(field, "injection.output_mode");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn playback_env_overrides_are_applied() {
+        let mut env = HashMap::new();
+        env.insert(
+            "STTD_OPENROUTER_API_KEY".to_string(),
+            "sk-test-from-env".to_string(),
+        );
+        env.insert("STTD_PLAYBACK_ENABLED".to_string(), "false".to_string());
+        env.insert(
+            "STTD_PLAYERCTL_CMD".to_string(),
+            "/tmp/mock-playerctl".to_string(),
+        );
+        env.insert(
+            "STTD_PLAYBACK_COMMAND_TIMEOUT_MS".to_string(),
+            "250".to_string(),
+        );
+        env.insert(
+            "STTD_PLAYBACK_AGGREGATE_TIMEOUT_MS".to_string(),
+            "900".to_string(),
+        );
+
+        let cfg = Config::load_from_toml_for_test(base_toml(), &env)
+            .expect("config should load with playback env overrides");
+
+        assert!(!cfg.playback.enabled);
+        assert_eq!(cfg.playback.playerctl_cmd, "/tmp/mock-playerctl");
+        assert_eq!(cfg.playback.command_timeout_ms, 250);
+        assert_eq!(cfg.playback.aggregate_timeout_ms, 900);
+    }
+
+    #[test]
+    fn contradictory_playback_timeouts_are_rejected() {
+        let raw = base_toml().replace(
+            "command_timeout_ms = 400\naggregate_timeout_ms = 1200",
+            "command_timeout_ms = 500\naggregate_timeout_ms = 250",
+        );
+        let mut env = HashMap::new();
+        env.insert(
+            "STTD_OPENROUTER_API_KEY".to_string(),
+            "sk-test-from-env".to_string(),
+        );
+
+        let err = Config::load_from_toml_for_test(&raw, &env).expect_err("must fail");
+        match err {
+            ConfigError::InvalidValue { field, .. } => {
+                assert_eq!(field, "playback.aggregate_timeout_ms");
             }
             other => panic!("unexpected error: {other:?}"),
         }

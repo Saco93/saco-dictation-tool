@@ -49,6 +49,16 @@ estimated_request_cost_usd = 0.0
 # monthly_soft_spend_limit_usd = 20.0
 allow_over_limit = false
 
+[playback]
+# Best-effort global playback control via playerctl + MPRIS.
+# Recording snapshots currently-playing players at session start only.
+enabled = true
+playerctl_cmd = "playerctl"
+# Per-command timeout for `playerctl -l`, `status`, `pause`, and `play`.
+command_timeout_ms = 400
+# Aggregate timeout budget for a full pause/resume pass across all players.
+aggregate_timeout_ms = 1200
+
 [injection]
 # type | clipboard | clipboard_autopaste
 output_mode = "type"

@@ -3,6 +3,7 @@
 ## Runtime Modules
 
 - `main.rs`: daemon bootstrap and worker orchestration
+- `playback.rs`: global playback controller + session-owned pause/resume coordinator
 - `state.rs`: state machine and guardrails
 - `debug_wav.rs`: debug artifact write/cleanup policy
 

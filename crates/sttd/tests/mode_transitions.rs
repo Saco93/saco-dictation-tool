@@ -3,21 +3,29 @@
 use std::time::Duration;
 
 use common::{config::GuardrailsConfig, protocol::DictationState};
-use sttd::state::{StateError, StateMachine};
+use sttd::state::{
+    PendingPushToTalkCapture, RecordingPhase, RecordingStopReason, StateError, StateMachine,
+};
 
-#[test]
-fn push_to_talk_and_continuous_modes_remain_exclusive() {
-    let mut state = StateMachine::new(GuardrailsConfig {
+fn guardrails() -> GuardrailsConfig {
+    GuardrailsConfig {
         max_requests_per_minute: 30,
         max_continuous_minutes: 30,
-        provider_error_cooldown_seconds: 3,
+        provider_error_cooldown_seconds: 1,
         monthly_soft_spend_limit_usd: None,
         estimated_request_cost_usd: 0.0,
         allow_over_limit: false,
-    });
+    }
+}
 
-    state.ptt_press().expect("ptt starts");
+#[test]
+fn push_to_talk_and_continuous_modes_remain_exclusive() {
+    let mut state = StateMachine::new(guardrails());
+
+    let press = state.ptt_press().expect("ptt starts");
+    let session = press.transition.start_requested().expect("ptt session");
     assert_eq!(state.current_state(), DictationState::PushToTalkActive);
+    assert_eq!(session.phase, RecordingPhase::StartPending);
 
     let err = state
         .toggle_continuous()
@@ -27,24 +35,27 @@ fn push_to_talk_and_continuous_modes_remain_exclusive() {
     state.ptt_release().expect("ptt release");
     state.finish_processing();
 
-    state
+    let enable = state
         .toggle_continuous()
         .expect("continuous can enable when idle");
+    let continuous_session = enable
+        .transition
+        .start_requested()
+        .expect("continuous session");
+    assert_eq!(continuous_session.phase, RecordingPhase::StartPending);
     assert_eq!(state.current_state(), DictationState::ContinuousActive);
 }
 
 #[test]
 fn provider_cooldown_blocks_new_commands_until_elapsed() {
-    let mut state = StateMachine::new(GuardrailsConfig {
-        max_requests_per_minute: 30,
-        max_continuous_minutes: 30,
-        provider_error_cooldown_seconds: 1,
-        monthly_soft_spend_limit_usd: None,
-        estimated_request_cost_usd: 0.0,
-        allow_over_limit: false,
-    });
+    let mut state = StateMachine::new(guardrails());
 
-    state.set_provider_error_cooldown();
+    let stop = state.set_provider_error_cooldown();
+    assert!(
+        stop.is_none(),
+        "idle cooldown should not report a recording stop"
+    );
+
     let err = state
         .ptt_press()
         .expect_err("cooldown should block command");
@@ -53,24 +64,47 @@ fn provider_cooldown_blocks_new_commands_until_elapsed() {
 
 #[test]
 fn ptt_press_release_queues_exactly_one_pending_utterance() {
-    let mut state = StateMachine::new(GuardrailsConfig {
-        max_requests_per_minute: 30,
-        max_continuous_minutes: 30,
-        provider_error_cooldown_seconds: 1,
-        monthly_soft_spend_limit_usd: None,
-        estimated_request_cost_usd: 0.0,
-        allow_over_limit: false,
-    });
+    let mut state = StateMachine::new(guardrails());
 
-    state.ptt_press().expect("ptt starts");
+    let press = state.ptt_press().expect("ptt starts");
+    let session = press.transition.start_requested().expect("ptt session");
+    let gate = state.mark_capture_permitted(session.id);
+    assert!(gate.capture_permitted().is_some(), "gate should open");
     std::thread::sleep(Duration::from_millis(120));
     state.ptt_release().expect("ptt release");
 
-    let first = state.take_pending_ptt_duration_ms();
-    let second = state.take_pending_ptt_duration_ms();
+    let first = state.take_pending_ptt_capture(session.id);
+    let second = state.take_pending_ptt_capture(session.id);
 
-    assert!(first.is_some(), "press/release should queue one utterance");
-    assert!(second.is_none(), "pending utterance should be consumed exactly once");
+    assert!(
+        matches!(first, Some(PendingPushToTalkCapture::Capture { .. })),
+        "press/release should queue one utterance"
+    );
+    assert!(
+        second.is_none(),
+        "pending utterance should be consumed exactly once"
+    );
+}
+
+#[test]
+fn release_before_gate_open_becomes_zero_length_cancel() {
+    let mut state = StateMachine::new(guardrails());
+
+    let press = state.ptt_press().expect("ptt starts");
+    let session = press.transition.start_requested().expect("ptt session");
+    let release = state.ptt_release().expect("ptt release");
+    let stopped = release
+        .transition
+        .stopped_recording()
+        .expect("stop transition");
+
+    assert_eq!(stopped.reason, RecordingStopReason::CancelledBeforeCapture);
+    assert_eq!(
+        state.take_pending_ptt_capture(session.id),
+        Some(PendingPushToTalkCapture::Cancelled {
+            session_id: session.id,
+        })
+    );
 }
 
 #[test]
@@ -120,15 +154,20 @@ fn continuous_limit_violation_reports_reason_and_resets_state() {
         allow_over_limit: false,
     });
 
-    state
+    let enable = state
         .toggle_continuous()
         .expect("continuous should enable from idle");
+    let session = enable
+        .transition
+        .start_requested()
+        .expect("continuous session");
+    state.mark_capture_permitted(session.id);
     std::thread::sleep(Duration::from_millis(5));
 
-    let err = state
-        .status()
-        .expect_err("continuous limit should be enforced");
-    assert!(matches!(err, StateError::ContinuousLimitExceeded));
+    let stopped = state
+        .enforce_continuous_limit()
+        .expect("continuous limit should be enforced");
+    assert_eq!(stopped.reason, RecordingStopReason::ContinuousLimitExceeded);
     assert_eq!(
         state.current_state(),
         DictationState::Idle,

@@ -18,12 +18,14 @@ use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
-    sync::{Mutex, broadcast},
+    sync::{Mutex, broadcast, mpsc},
 };
 use tracing::{info, warn};
 
 use crate::injection::{InjectionError, InjectionResult, Injector};
-use crate::state::{StateError, StateMachine};
+use crate::state::{
+    RecordingSession, RecordingTransition, StateError, StateMachine, StoppedRecording,
+};
 
 #[derive(Debug, Error)]
 pub enum ServerError {
@@ -61,11 +63,18 @@ impl ReplayHandler for InjectorReplayHandler {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum RuntimeCommand {
+    StartRequested(RecordingSession),
+    StopRequested(StoppedRecording),
+}
+
 pub async fn run(
     ipc_cfg: &IpcConfig,
     socket_path: &Path,
     state: Arc<Mutex<StateMachine>>,
     replay_handler: Option<Arc<dyn ReplayHandler>>,
+    runtime_tx: Option<mpsc::UnboundedSender<RuntimeCommand>>,
     mut shutdown: broadcast::Receiver<()>,
 ) -> Result<(), ServerError> {
     prepare_socket(socket_path, ipc_cfg)?;
@@ -84,7 +93,7 @@ pub async fn run(
             }
             accept = listener.accept() => {
                 let (stream, _addr) = accept.map_err(|e| ServerError::Io(e.to_string()))?;
-                let should_stop = handle_connection(stream, &state, replay_handler.as_ref()).await?;
+                let should_stop = handle_connection(stream, &state, replay_handler.as_ref(), runtime_tx.as_ref()).await?;
                 if should_stop {
                     break;
                 }
@@ -116,6 +125,7 @@ async fn handle_connection(
     mut stream: UnixStream,
     state: &Arc<Mutex<StateMachine>>,
     replay_handler: Option<&Arc<dyn ReplayHandler>>,
+    runtime_tx: Option<&mpsc::UnboundedSender<RuntimeCommand>>,
 ) -> Result<bool, ServerError> {
     let mut request_buf = Vec::new();
     stream
@@ -145,7 +155,8 @@ async fn handle_connection(
         return Ok(false);
     }
 
-    let (response, should_stop) = execute_command(state, replay_handler, request.command).await;
+    let (response, should_stop) =
+        execute_command(state, replay_handler, runtime_tx, request.command).await;
     write_response(&mut stream, &response).await?;
     Ok(should_stop)
 }
@@ -169,50 +180,69 @@ async fn write_response(
 async fn execute_command(
     state: &Arc<Mutex<StateMachine>>,
     replay_handler: Option<&Arc<dyn ReplayHandler>>,
+    runtime_tx: Option<&mpsc::UnboundedSender<RuntimeCommand>>,
     command: Command,
 ) -> (ResponseEnvelope, bool) {
     match command {
         Command::ReplayLastTranscript => handle_replay_command(state, replay_handler).await,
         Command::PttPress => {
-            let mut state_guard = state.lock().await;
-            match state_guard.ptt_press() {
-                Ok(message) => (
-                    ResponseEnvelope::ok(Response::Ack {
-                        message: message.to_string(),
-                    }),
-                    false,
-                ),
+            let result = {
+                let mut state_guard = state.lock().await;
+                state_guard.ptt_press()
+            };
+            match result {
+                Ok(result) => {
+                    notify_runtime(runtime_tx, result.transition);
+                    (
+                        ResponseEnvelope::ok(Response::Ack {
+                            message: result.message.to_string(),
+                        }),
+                        false,
+                    )
+                }
                 Err(err) => (map_state_error(err), false),
             }
         }
         Command::PttRelease => {
-            let mut state_guard = state.lock().await;
-            match state_guard.ptt_release() {
-                Ok(message) => (
-                    ResponseEnvelope::ok(Response::Ack {
-                        message: message.to_string(),
-                    }),
-                    false,
-                ),
+            let result = {
+                let mut state_guard = state.lock().await;
+                state_guard.ptt_release()
+            };
+            match result {
+                Ok(result) => {
+                    notify_runtime(runtime_tx, result.transition);
+                    (
+                        ResponseEnvelope::ok(Response::Ack {
+                            message: result.message.to_string(),
+                        }),
+                        false,
+                    )
+                }
                 Err(err) => (map_state_error(err), false),
             }
         }
         Command::ToggleContinuous => {
-            let mut state_guard = state.lock().await;
-            match state_guard.toggle_continuous() {
-                Ok(message) => (
-                    ResponseEnvelope::ok(Response::Ack {
-                        message: message.to_string(),
-                    }),
-                    false,
-                ),
+            let result = {
+                let mut state_guard = state.lock().await;
+                state_guard.toggle_continuous()
+            };
+            match result {
+                Ok(result) => {
+                    notify_runtime(runtime_tx, result.transition);
+                    (
+                        ResponseEnvelope::ok(Response::Ack {
+                            message: result.message.to_string(),
+                        }),
+                        false,
+                    )
+                }
                 Err(err) => (map_state_error(err), false),
             }
         }
         Command::Status => {
             let mut state_guard = state.lock().await;
             match state_guard.status() {
-                Ok(status) => (ResponseEnvelope::ok(Response::Status(status)), false),
+                Ok(message) => (ResponseEnvelope::ok(Response::Status(message)), false),
                 Err(err) => (map_state_error(err), false),
             }
         }
@@ -225,10 +255,55 @@ async fn execute_command(
     }
 }
 
+fn notify_runtime(
+    runtime_tx: Option<&mpsc::UnboundedSender<RuntimeCommand>>,
+    transition: RecordingTransition,
+) {
+    let Some(runtime_tx) = runtime_tx else {
+        return;
+    };
+
+    if let Some(session) = transition.start_requested()
+        && runtime_tx
+            .send(RuntimeCommand::StartRequested(session))
+            .is_err()
+    {
+        warn!(
+            session_id = session.id,
+            "runtime event channel dropped start request"
+        );
+    }
+
+    if let Some(stopped) = transition.stopped_recording()
+        && runtime_tx
+            .send(RuntimeCommand::StopRequested(stopped))
+            .is_err()
+    {
+        warn!(
+            session_id = stopped.session.id,
+            "runtime event channel dropped stop request"
+        );
+    }
+}
+
 async fn handle_replay_command(
     state: &Arc<Mutex<StateMachine>>,
     replay_handler: Option<&Arc<dyn ReplayHandler>>,
 ) -> (ResponseEnvelope, bool) {
+    {
+        let state_guard = state.lock().await;
+        if state_guard.current_state() != DictationState::Idle {
+            return (
+                ResponseEnvelope::err(
+                    "ERR_INVALID_TRANSITION",
+                    "cannot replay transcript while dictation is active",
+                    false,
+                ),
+                false,
+            );
+        }
+    }
+
     let Some(handler) = replay_handler else {
         return (
             ResponseEnvelope::err(

@@ -8,5 +8,6 @@ pub mod audio;
 pub mod debug_wav;
 pub mod injection;
 pub mod ipc;
+pub mod playback;
 pub mod provider;
 pub mod state;
