@@ -7,8 +7,8 @@
       "project_type": "backend",
       "root_path": "crates/sttd",
       "entry_point": "crates/sttd/src/main.rs",
-      "tech_stack": ["Rust", "tokio", "cpal", "reqwest", "serde", "tracing"],
-      "interfaces": ["unix_socket_ipc", "provider_http_or_process", "desktop_output_backends"]
+      "tech_stack": ["Rust", "tokio", "cpal", "reqwest", "serde", "tracing", "playerctl"],
+      "interfaces": ["unix_socket_ipc", "provider_http_or_process", "desktop_output_backends", "desktop_playback_control"]
     },
     {
       "part_id": "sttctl",
@@ -45,6 +45,12 @@
       "to": "desktop_output",
       "type": "backend_execution",
       "details": "wtype typing and/or wl-copy clipboard output"
+    },
+    {
+      "from": "sttd",
+      "to": "desktop_playback",
+      "type": "playerctl_mpris_boundary",
+      "details": "best-effort pause/resume of currently playing MPRIS sessions before and after recording"
     }
   ]
 }

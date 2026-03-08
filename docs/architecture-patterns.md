@@ -14,10 +14,12 @@
   - Long-running process exposed via local IPC boundary.
 - **Adapter Pattern for Providers**
   - Distinct adapters for `openrouter`, `whisper_local`, `whisper_server`.
+- **Gated Recording Lifecycle**
+  - Accepted start requests open capture only after bounded playback coordination completes or times out.
 - **Pipeline-style Processing**
-  - Input capture -> VAD/state coordination -> provider transcription -> output injection.
+  - Playback coordination -> input capture -> VAD/state coordination -> provider transcription -> output injection.
 - **Stateful Orchestration**
-  - Explicit runtime state model with mode transitions and recovery behavior.
+  - Explicit runtime state model with mode transitions, capture gating, and recovery behavior.
 
 ### sttctl
 

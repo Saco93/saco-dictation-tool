@@ -1,6 +1,6 @@
 # master - Source Tree Analysis (Exhaustive)
 
-**Date:** 2026-03-06
+**Date:** 2026-03-08
 **Scan Level:** exhaustive
 
 ## Overview
@@ -51,6 +51,7 @@ master/
 │       │   ├── debug_wav.rs
 │       │   ├── lib.rs
 │       │   ├── main.rs
+│       │   ├── playback.rs
 │       │   └── state.rs
 │       └── tests/
 │           ├── device_recovery.rs
@@ -73,13 +74,13 @@ master/
 ### `crates/sttd/src`
 
 - Purpose: daemon runtime core.
-- Contains: state machine, provider abstraction, IPC server, audio/VAD pipeline, output injection.
+- Contains: state machine, playback coordinator, provider abstraction, IPC server, audio/VAD pipeline, output injection.
 - Entry points: `main.rs`, `lib.rs`.
 
 ### `crates/sttd/tests`
 
 - Purpose: integration and contract regression verification.
-- Includes provider contract tests, IPC flow, device recovery, service/release docs assertions.
+- Includes provider contract tests, IPC flow, device recovery, service/release docs assertions, and playback lifecycle regression coverage.
 
 ### `crates/sttctl/src`
 
@@ -93,18 +94,20 @@ master/
 
 ### `config`
 
-- Purpose: deployment/runtime templates.
-- Contains systemd user units and TOML/env templates.
+- Purpose: deployment and runtime templates.
+- Contains systemd user units and TOML/env templates, including playback-control defaults and overrides.
 
 ## Integration Points
 
 - `sttctl -> sttd`: Unix socket IPC command/control.
 - `sttd -> provider endpoints/processes`: OpenRouter HTTP, whisper_server HTTP, whisper_local process.
+- `sttd -> playerctl/MPRIS`: best-effort global playback pause/resume around recording sessions.
 - `sttd + sttctl -> common`: compile-time contract sharing.
 
 ## File Organization Patterns
 
-- Runtime logic isolated in `sttd` crate.
+- Runtime logic isolated in the `sttd` crate.
 - Cross-crate contracts centralized in `common`.
 - Operational policy and startup contracts in `config` templates and tests.
+- Playback coordination stays in its own daemon module instead of being scattered across IPC and worker code.
 - Documentation quality gates are partially enforced by tests (`release_readiness_docs.rs`).

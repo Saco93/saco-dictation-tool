@@ -9,7 +9,7 @@
       "project_type_id": "backend",
       "display_name": "Backend Service",
       "language": "Rust",
-      "purpose": "Speech-to-text daemon runtime with audio capture, provider adapters, IPC server, and output injection"
+      "purpose": "Speech-to-text daemon runtime with audio capture, playback coordination, provider adapters, IPC server, and output injection"
     },
     {
       "part_id": "sttctl",

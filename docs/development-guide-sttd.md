@@ -9,12 +9,15 @@ cp config/sttd.example.toml ~/.config/sttd/sttd.toml
 cp config/sttd.env.example ~/.config/sttd/sttd.env
 ```
 
-## Playback Dependency
+## Playback Control Contract
 
 - Global playback auto-pause is best-effort and depends on `playerctl` being installed.
 - `sttd` snapshots only the players already reporting `Playing` when a recording session starts.
+- Audio capture does not begin until the initial pause pass finishes or times out.
+- `sttd` resumes only the players it successfully paused for the current recording session.
 - `playback.command_timeout_ms` bounds each individual `playerctl` command.
 - `playback.aggregate_timeout_ms` bounds the total pause or resume pass across all players.
+- Missing, failing, or hanging playback commands log warnings and degrade to no-op behavior.
 - Set `playback.enabled = false` to disable playback control entirely.
 
 ## Run Daemon

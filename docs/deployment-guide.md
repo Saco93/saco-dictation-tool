@@ -31,4 +31,5 @@ systemctl --user status whisper-server.service
 ## Operational Checks
 
 - `sttctl status` returns protocol version and state payload
+- If `playback.enabled = true`, ensure `playerctl` is installed in the service environment or override `STTD_PLAYERCTL_CMD`.
 - service restart behavior is `on-failure`

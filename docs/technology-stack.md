@@ -22,6 +22,7 @@
 | Observability | tracing + tracing-subscriber | 0.1 / 0.3 | runtime logging with env filter |
 | Error Model | anyhow + thiserror | 1.0 / 2.0 | ergonomic and typed error flows |
 | Internal Shared Contract | common | path dependency | shared IPC/config model |
+| External Desktop Integration | `playerctl` + MPRIS | runtime dependency | bounded global playback pause/resume around recording |
 | Dev/Test | tempfile + wiremock | 3.23 / 0.6 | integration testing and HTTP mocking |
 
 ## Part: sttctl (cli)

@@ -7,6 +7,7 @@
 - `sttctl` -> `common` via compile-time shared protocol/config contracts
 - `sttd` -> OpenRouter / whisper_server / whisper_local (provider boundary)
 - `sttd` -> output backends (`wtype`, `wl-copy`)
+- `sttd` -> `playerctl` / MPRIS players (playback boundary)
 
 ## Integration Points
 
@@ -15,7 +16,7 @@
 - Source: `sttctl`
 - Target: `sttd::ipc::server`
 - Type: local Unix socket request/response
-- Data contract: `RequestEnvelope`/`ResponseEnvelope` in `common::protocol`
+- Data contract: `RequestEnvelope` / `ResponseEnvelope` in `common::protocol`
 - Compatibility gate: strict `protocol_version` check
 
 ### 2. Shared Contract Coupling
@@ -32,27 +33,37 @@
   - fallback endpoint: `/chat/completions` with audio payload
 - whisper_server:
   - `/inference` endpoint
-  - optional startup readiness/language probe
+  - optional startup readiness and language probe
 - whisper_local:
   - process invocation of `whisper-cli`
 
 ### 4. Output Backend Integration
 
 - Primary typed insertion backend: `wtype`
-- Clipboard fallback/autopaste backend: `wl-copy` + optional `wtype ctrl+v`
+- Clipboard fallback and autopaste backend: `wl-copy` + optional `wtype ctrl+v`
 - Failure path retains transcript for replay command
+
+### 5. Playback Control Integration
+
+- Source: `sttd::playback::PlaybackCoordinator`
+- Target: `playerctl` and desktop-session MPRIS players
+- Type: local process invocation with bounded timeouts
+- Contract: enumerate players, pause the current `Playing` snapshot before capture, resume only tracked successful pauses on stop or shutdown
 
 ## Control/Data Flow
 
-1. `sttctl` builds a `RequestEnvelope` command and sends to daemon socket.
-2. IPC server validates protocol version and routes command to state machine/replay handler.
-3. Runtime worker in `sttd` captures audio and segments utterances (PTT or continuous VAD).
-4. Provider adapter transcribes utterance and returns normalized transcript.
-5. Injector delivers transcript via configured output backend.
-6. On output failure, transcript is retained and error code exposed in status payload.
+1. `sttctl` builds a `RequestEnvelope` command and sends it to the daemon socket.
+2. IPC server validates protocol version and routes the command to the state machine or replay handler.
+3. If the command starts recording, runtime worker performs a bounded playback pause pass before audio capture is permitted.
+4. Runtime worker in `sttd` captures audio and segments utterances (PTT or continuous VAD) only after the start gate opens.
+5. Provider adapter transcribes the utterance and returns a normalized transcript.
+6. Injector delivers the transcript via the configured output backend.
+7. On recording stop or daemon shutdown, playback coordinator resumes only the players that `sttd` paused for that session.
+8. On output failure, transcript is retained and an error code is exposed in the status payload.
 
 ## Failure and Recovery Interfaces
 
+- Playback command missing, failing, or hanging -> warning + no-op behavior within configured timeout bounds.
 - Audio input unavailable -> daemon remains alive, reports `ERR_AUDIO_INPUT_UNAVAILABLE`.
 - Provider retryable errors -> cooldown state enforced.
 - Output backend failures -> retained transcript + replay command path.
@@ -60,5 +71,7 @@
 ## Integration Constraints
 
 - IPC commands requiring idle state (for example replay) reject invalid transitions.
-- Protocol mismatch returns `ERR_PROTOCOL_VERSION` without processing command.
+- `status` stays responsive while playback pause is in flight and reports the destination active mode without paused-player details.
+- Playback scope is snapshot-at-recording-start only; no mid-session re-scan runs for newly started media.
+- Protocol mismatch returns `ERR_PROTOCOL_VERSION` without processing the command.
 - Startup provider capability checks gate daemon readiness.

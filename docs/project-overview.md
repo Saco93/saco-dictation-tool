@@ -1,12 +1,12 @@
 # master - Project Overview (Exhaustive)
 
-**Date:** 2026-03-06
+**Date:** 2026-03-08
 **Type:** monorepo (3 parts)
 **Architecture:** Daemon + CLI + Shared Contract
 
 ## Executive Summary
 
-`saco-dictation-tool` is a Rust workspace delivering a local-first dictation system. `sttd` runs as a daemon handling audio capture and transcription orchestration, `sttctl` provides command-line control, and `common` centralizes configuration/protocol contracts.
+`saco-dictation-tool` is a Rust workspace delivering a local-first dictation system. `sttd` runs as a daemon handling audio capture, bounded playback coordination, transcription orchestration, and transcript output delivery. `sttctl` provides command-line control, and `common` centralizes configuration and protocol contracts.
 
 Project purpose was inferred from binary descriptions, service unit metadata, and source layout because `README.md` is absent from the current worktree.
 
@@ -31,12 +31,14 @@ Project purpose was inferred from binary descriptions, service unit metadata, an
 - Local IPC control plane with versioned envelope contract.
 - Adapter-based provider strategy (`openrouter`, `whisper_local`, `whisper_server`).
 - Guardrail-rich runtime state machine (rate limit, cooldown, continuous limit, soft-spend controls).
+- Bounded playback start gate that pauses currently playing MPRIS sessions before capture and resumes only players paused by `sttd`.
 - Transcript retention + replay flow for output failure recovery.
 
 ## Operational Highlights
 
 - systemd user-service deployment contract in `config/*.service`.
 - Startup capability validation for providers.
+- Best-effort global playback control via `playerctl`, with per-command and aggregate timeout bounds.
 - Integration tests enforce runtime and documentation contracts.
 
 ## Key Commands

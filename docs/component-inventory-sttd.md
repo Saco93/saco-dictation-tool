@@ -2,10 +2,11 @@
 
 ## Runtime Modules
 
-- `main.rs`: daemon bootstrap and worker orchestration
-- `playback.rs`: global playback controller + session-owned pause/resume coordinator
-- `state.rs`: state machine and guardrails
-- `debug_wav.rs`: debug artifact write/cleanup policy
+- `main.rs`: daemon bootstrap, runtime worker orchestration, capture gate ownership, and shutdown cleanup
+- `playback.rs`: global playback controller, session-owned pause/resume coordinator, and timeout handling
+- `state.rs`: state machine, recording session phases, guardrails, and retained-transcript state
+- `debug_wav.rs`: debug artifact write and cleanup policy
+- `lib.rs`: crate export surface
 
 ## Audio Stack
 
@@ -16,7 +17,7 @@
 ## IPC Stack
 
 - `ipc/mod.rs`: request client transport helper
-- `ipc/server.rs`: socket server, command routing, replay handling
+- `ipc/server.rs`: socket server, command routing, replay handling, and runtime transition notifications
 
 ## Provider Stack
 

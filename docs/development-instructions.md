@@ -7,6 +7,7 @@
 - `uv` for local workflow sync (`uv sync --all-extras`)
 - Runtime tools for desktop injection and local ASR:
   - `whisper-cli` (or `whisper-server`)
+  - `playerctl` for playback auto-pause support
   - `wtype`
   - `wl-copy`
 
@@ -52,5 +53,6 @@ Targeted tests observed:
 ## Runtime Debugging Notes
 
 - Daemon keeps running even when audio input is unavailable and reports `ERR_AUDIO_INPUT_UNAVAILABLE`.
+- Playback control is best-effort; missing or hanging `playerctl` calls log warnings and degrade to no-op behavior.
 - Output backend failure retains transcript for replay (`replay-last-transcript`).
 - Debug WAV output can be enabled with TTL and size cap controls.

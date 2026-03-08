@@ -74,23 +74,29 @@ or
 - `last_output_error_code`
 - `last_audio_error_code`
 
-Backward compatibility detail: retained/audio error fields are `#[serde(default)]`.
+Backward compatibility detail: retained/audio error fields are `#[serde(default)]`. No playback-specific protocol fields were added.
 
 ## 2. IPC Command -> Behavior Mapping
 
 ### `PttPress`
 
 - Valid from `Idle`; moves to `PushToTalkActive`
+- Returns the existing ACK immediately after the state transition is accepted
+- Runtime worker pauses the current `Playing` snapshot before opening audio capture
 - Fails if continuous mode active (`ERR_INVALID_TRANSITION`)
 
 ### `PttRelease`
 
 - Valid from `PushToTalkActive`; queues pending utterance duration and moves to `Processing`
+- If release arrives before capture is permitted, runtime treats the session as a zero-length cancelled capture and skips transcription
+- Resume runs only for players that `sttd` successfully paused for the same session
 
 ### `ToggleContinuous`
 
 - Idle -> ContinuousActive
 - ContinuousActive -> Idle
+- Enable ACK remains immediate even while the playback start gate is still resolving
+- Runtime-driven continuous stop paths use the same conditional playback resume logic as explicit disable
 - Rejected during PTT active/processing
 
 ### `ReplayLastTranscript`
@@ -102,10 +108,13 @@ Backward compatibility detail: retained/audio error fields are `#[serde(default)
 ### `Status`
 
 - Returns state snapshot and guardrail/cooldown indicators
+- Reports `push_to_talk_active` or `continuous_active` as soon as a start request is accepted, even if the playback gate is unresolved
+- Does not expose paused-player details or playback ownership
 
 ### `Shutdown`
 
 - Returns ACK and requests server loop stop
+- After ACK, daemon shutdown includes worker drain plus one best-effort playback resume pass for any session-owned paused players
 
 ## 3. Error Code Contract
 

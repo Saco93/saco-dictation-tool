@@ -3,11 +3,11 @@
 **Type:** monorepo with 3 parts
 **Primary Language:** Rust
 **Architecture:** Daemon + CLI + Shared Contract
-**Last Updated:** 2026-03-06 (initial exhaustive scan)
+**Last Updated:** 2026-03-08 (manual refresh for playback lifecycle docs)
 
 ## Project Overview
 
-This documentation set was generated via an initial exhaustive scan and is intended as the primary retrieval context for AI-assisted maintenance and feature work.
+This documentation set was generated via an initial exhaustive scan and then refreshed to reflect the current `sttd` playback-gated recording lifecycle.
 
 ## Project Structure
 
@@ -15,7 +15,7 @@ This documentation set was generated via an initial exhaustive scan and is inten
 
 - Root: `crates/sttd`
 - Entry: `crates/sttd/src/main.rs`
-- Role: daemon runtime, provider orchestration, IPC server, output injection
+- Role: daemon runtime, playback coordination, provider orchestration, IPC server, output injection
 
 ### sttctl (cli)
 
@@ -33,6 +33,7 @@ This documentation set was generated via an initial exhaustive scan and is inten
 
 - **Control plane:** Unix socket IPC with protocol envelopes (`common::protocol`)
 - **Provider modes:** `openrouter` / `whisper_local` / `whisper_server`
+- **Playback control:** best-effort `playerctl`/MPRIS pause-resume around recording sessions
 - **Recovery paths:** audio input unavailable handling + retained transcript replay
 - **Deployment style:** systemd user services
 
