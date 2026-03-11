@@ -1,41 +1,22 @@
 # master Documentation Index
 
-**Type:** monorepo with 3 parts
-**Primary Language:** Rust
-**Architecture:** Daemon + CLI + Shared Contract
-**Last Updated:** 2026-03-08 (manual refresh for playback lifecycle docs)
+**Type:** monorepo with 3 parts  
+**Primary Language:** Rust  
+**Architecture:** Daemon + CLI + Shared Contract  
+**Last Updated:** 2026-03-11
 
 ## Project Overview
 
-This documentation set was generated via an initial exhaustive scan and then refreshed to reflect the current `sttd` playback-gated recording lifecycle.
-
-## Project Structure
-
-### sttd (backend)
-
-- Root: `crates/sttd`
-- Entry: `crates/sttd/src/main.rs`
-- Role: daemon runtime, playback coordination, provider orchestration, IPC server, output injection
-
-### sttctl (cli)
-
-- Root: `crates/sttctl`
-- Entry: `crates/sttctl/src/main.rs`
-- Role: command-line control plane for daemon
-
-### common (library)
-
-- Root: `crates/common`
-- Entry: `crates/common/src/lib.rs`
-- Role: shared config/protocol contract authority
+This documentation set has been refreshed for the hosted-provider generalization that introduces canonical `openai_compatible` support, keeps `openrouter` as a compatibility alias, and documents DashScope `qwen3-asr-flash` as the primary hosted example.
 
 ## Quick Reference
 
 - **Control plane:** Unix socket IPC with protocol envelopes (`common::protocol`)
-- **Provider modes:** `openrouter` / `whisper_local` / `whisper_server`
+- **Provider modes:** `openai_compatible` / legacy `openrouter` / `whisper_local` / `whisper_server`
+- **Hosted request modes:** `auto` or `chat_completions`
 - **Playback control:** best-effort `playerctl`/MPRIS pause-resume around recording sessions
 - **Recovery paths:** audio input unavailable handling + retained transcript replay
-- **Deployment style:** systemd user services
+- **Benchmark artifact:** `_bmad-output/implementation-artifacts/qwen3-asr-flash-benchmark-2026-03-11.md`
 
 ## Generated Documentation
 
@@ -56,38 +37,15 @@ This documentation set was generated via an initial exhaustive scan and then ref
 - [Development Guide - sttd](./development-guide-sttd.md)
 - [Comprehensive Analysis - sttd](./comprehensive-analysis-sttd.md)
 
-### sttctl
-
-- [Architecture - sttctl](./architecture-sttctl.md)
-- [Component Inventory - sttctl](./component-inventory-sttctl.md)
-- [Development Guide - sttctl](./development-guide-sttctl.md)
-- [Comprehensive Analysis - sttctl](./comprehensive-analysis-sttctl.md)
-
-### common
-
-- [Architecture - common](./architecture-common.md)
-- [Component Inventory - common](./component-inventory-common.md)
-- [Development Guide - common](./development-guide-common.md)
-- [Comprehensive Analysis - common](./comprehensive-analysis-common.md)
-
-### Cross-Part and Operations
+### Operations
 
 - [Integration Architecture](./integration-architecture.md)
 - [Deployment Guide](./deployment-guide.md)
 - [Contribution Guide](./contribution-guide.md)
-- [Critical Folders Summary](./critical-folders-summary.md)
-- [Project Parts Metadata](./project-parts.json)
-- [Workflow State](./project-scan-report.json)
-- [Validation Report](./documentation-validation-report.md)
-
-## Existing Repository Documentation
-
-No pre-existing repository documentation files were present on the current filesystem when this scan started.
 
 ## Getting Started for AI-assisted Work
 
 1. Start with [Project Overview](./project-overview.md).
-2. Read [Integration Architecture](./integration-architecture.md).
-3. For daemon/runtime work, use `architecture-sttd.md` + `api-contracts-sttd.md` + `data-models-sttd.md`.
-4. For CLI work, use `architecture-sttctl.md`.
-5. For cross-part contract changes, include `architecture-common.md`.
+2. For daemon/runtime work, read [Architecture - sttd](./architecture-sttd.md) and [API Contracts - sttd](./api-contracts-sttd.md).
+3. For config or protocol changes, include `crates/common` and [Data Models - sttd](./data-models-sttd.md).
+4. For hosted-provider work, check the benchmark artifact and README examples together.

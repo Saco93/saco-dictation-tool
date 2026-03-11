@@ -1,36 +1,21 @@
-# Component Inventory - sttd (Exhaustive)
+# Component Inventory - sttd
 
 ## Runtime Modules
 
-- `main.rs`: daemon bootstrap, runtime worker orchestration, capture gate ownership, and shutdown cleanup
-- `playback.rs`: global playback controller, session-owned pause/resume coordinator, and timeout handling
-- `state.rs`: state machine, recording session phases, guardrails, and retained-transcript state
+- `main.rs`: daemon bootstrap, worker orchestration, playback gate ownership, and shutdown cleanup
+- `runtime_pipeline.rs`: final transcription and injection path shared by runtime and tests
+- `playback.rs`: global playback controller and session-owned pause/resume coordinator
+- `state.rs`: mode transitions, guardrails, and retained-transcript state
 - `debug_wav.rs`: debug artifact write and cleanup policy
 - `lib.rs`: crate export surface
 
-## Audio Stack
-
-- `audio/capture.rs`: device open/capture/recovery + VAD segmenter
-- `audio/format.rs`: normalization, resampling, frame utilities
-- `audio/mod.rs`: module exports
-
-## IPC Stack
-
-- `ipc/mod.rs`: request client transport helper
-- `ipc/server.rs`: socket server, command routing, replay handling, and runtime transition notifications
-
 ## Provider Stack
 
-- `provider/mod.rs`: trait and provider error taxonomy
-- `provider/openrouter.rs`: API + chat fallback logic
+- `provider/mod.rs`: shared trait, request/response model, provider selection
+- `provider/openai_compatible.rs`: canonical hosted provider implementation
+- `provider/openrouter.rs`: legacy compatibility shim
 - `provider/whisper_local.rs`: local binary execution provider
 - `provider/whisper_server.rs`: persistent inference HTTP provider
-
-## Output Injection Stack
-
-- `injection/mod.rs`: backend selection/fallback orchestration
-- `injection/wtype.rs`: typed output backend
-- `injection/clipboard.rs`: clipboard backend
 
 ## Test Modules
 

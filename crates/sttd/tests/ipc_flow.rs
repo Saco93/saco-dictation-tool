@@ -1,6 +1,9 @@
 #![allow(unused_crate_dependencies)]
 
 use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::Path,
     path::PathBuf,
     sync::{
         Arc,
@@ -11,6 +14,7 @@ use std::{
 
 use async_trait::async_trait;
 use common::{
+    Config,
     config::{GuardrailsConfig, IpcConfig},
     protocol::{
         Command, DictationState, ERR_OUTPUT_BACKEND_UNAVAILABLE, ERR_PROTOCOL_VERSION,
@@ -18,16 +22,24 @@ use common::{
     },
 };
 use sttd::{
+    debug_wav::DebugWavRecorder,
+    injection::Injector,
     injection::{InjectionError, InjectionResult},
     ipc::{
         send_request,
         server::{self, ReplayHandler, RuntimeCommand},
     },
+    provider::build_provider,
+    runtime_pipeline::{ProcessingDeps, UtteranceSource, process_samples},
     state::{RecordingMode, RecordingStopReason, StateMachine},
 };
 use tokio::{
     sync::{Mutex, broadcast, mpsc},
     time::timeout,
+};
+use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
 };
 
 #[derive(Clone, Debug)]
@@ -409,6 +421,163 @@ async fn replay_without_handler_preserves_retained_transcript_when_idle() {
     assert!(server_result.is_ok());
 }
 
+#[tokio::test]
+async fn runtime_processing_injects_only_final_transcript_for_hosted_provider() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/compatible-mode/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "final transcript from qwen"
+                    }
+                }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let sink_path = temp_dir.path().join("typed.txt");
+    let wtype_path = temp_dir.path().join("wtype-mock");
+    write_executable_script(
+        &wtype_path,
+        &format!(
+            "#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n",
+            sink_path.display()
+        ),
+    );
+
+    let raw = format!(
+        r#"
+[provider]
+kind = "openai_compatible"
+base_url = "{}/compatible-mode/v1"
+model = "qwen3-asr-flash"
+api_key = "sk-test"
+request_mode = "chat_completions"
+capability_probe = false
+max_retries = 0
+env_file_path = "/tmp/non-existent.env"
+
+[audio]
+sample_rate_hz = 16000
+channels = 1
+frame_ms = 20
+max_utterance_ms = 30000
+max_payload_bytes = 1500000
+
+[vad]
+start_threshold_dbfs = -38.0
+end_silence_ms = 700
+min_speech_ms = 250
+max_utterance_ms = 30000
+
+[guardrails]
+max_requests_per_minute = 30
+max_continuous_minutes = 30
+provider_error_cooldown_seconds = 5
+estimated_request_cost_usd = 0.0
+allow_over_limit = false
+
+[playback]
+enabled = false
+playerctl_cmd = "playerctl"
+command_timeout_ms = 400
+aggregate_timeout_ms = 1200
+
+[injection]
+output_mode = "type"
+clipboard_autopaste = false
+wtype_cmd = "{}"
+wl_copy_cmd = "{}"
+
+[debug_wav]
+enabled = false
+directory = "{}"
+ttl_hours = 24
+size_cap_mb = 10
+
+[ipc]
+socket_path = "/tmp/sttd.sock"
+socket_dir_mode = 448
+socket_file_mode = 384
+
+[privacy]
+redact_transcript_in_logs = true
+persist_transcripts = false
+"#,
+        server.uri(),
+        wtype_path.display(),
+        temp_dir.path().join("missing-wl-copy").display(),
+        temp_dir.path().join("debug").display(),
+    );
+
+    let cfg = Config::load_from_toml_for_test(&raw, &std::collections::HashMap::new())
+        .expect("load config");
+    let provider = build_provider(&cfg).expect("build provider");
+    let state = Arc::new(Mutex::new(StateMachine::new(cfg.guardrails.clone())));
+    {
+        let mut state_guard = state.lock().await;
+        let press = state_guard.ptt_press().expect("ptt press");
+        let session = press.transition.start_requested().expect("session");
+        state_guard.mark_capture_permitted(session.id);
+        state_guard.ptt_release().expect("ptt release");
+        assert_eq!(state_guard.current_state(), DictationState::Processing);
+    }
+
+    let deps = ProcessingDeps {
+        config: Arc::new(cfg),
+        provider,
+        injector: Injector::new(common::config::InjectionConfig {
+            output_mode: "type".to_string(),
+            clipboard_autopaste: false,
+            wtype_cmd: wtype_path.display().to_string(),
+            wl_copy_cmd: temp_dir
+                .path()
+                .join("missing-wl-copy")
+                .display()
+                .to_string(),
+        }),
+        recorder: DebugWavRecorder::new(common::config::DebugWavConfig {
+            enabled: false,
+            directory: temp_dir.path().join("debug").display().to_string(),
+            ttl_hours: 24,
+            size_cap_mb: 10,
+        }),
+        playback: None,
+        state: state.clone(),
+    };
+
+    process_samples(&deps, vec![0_i16; 1_600], UtteranceSource::PushToTalk).await;
+
+    assert_eq!(
+        fs::read_to_string(&sink_path).expect("typed transcript"),
+        "final transcript from qwen"
+    );
+    {
+        let state_guard = state.lock().await;
+        assert_eq!(state_guard.current_state(), DictationState::Idle);
+        assert!(
+            !state_guard.has_last_transcript(),
+            "successful injection should not retain transcript"
+        );
+    }
+
+    let received = server
+        .received_requests()
+        .await
+        .expect("request recording enabled");
+    assert_eq!(received.len(), 1);
+    assert_eq!(
+        received[0].url.path(),
+        "/compatible-mode/v1/chat/completions"
+    );
+}
+
 async fn wait_for_socket(path: &std::path::Path) {
     for _ in 0..50 {
         if path.exists() {
@@ -417,4 +586,11 @@ async fn wait_for_socket(path: &std::path::Path) {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     panic!("socket did not appear in time: {}", path.display());
+}
+
+fn write_executable_script(path: &Path, script: &str) {
+    fs::write(path, script).expect("write script");
+    let mut perms = fs::metadata(path).expect("script metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("set execute bit");
 }

@@ -2,7 +2,7 @@
 
 Local-first speech-to-text dictation for Hyprland and Wayland desktops.
 
-This workspace packages a long-running daemon, a control CLI, and shared protocol/config code. The daemon captures microphone audio, pauses active media playback before recording, sends audio to a transcription provider, and injects the transcript back into your desktop session by typing or clipboard.
+This workspace packages a long-running daemon, a control CLI, and shared protocol/config code. The daemon captures microphone audio, pauses active media playback before recording, sends audio to a transcription provider, and injects the final transcript back into your desktop session by typing or clipboard.
 
 ## Table of Contents
 
@@ -10,8 +10,8 @@ This workspace packages a long-running daemon, a control CLI, and shared protoco
 - [How It Works](#how-it-works)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
-- [Control Commands](#control-commands)
 - [Configuration Overview](#configuration-overview)
+- [Benchmarking](#benchmarking)
 - [Run as a systemd User Service](#run-as-a-systemd-user-service)
 - [Development](#development)
 - [Documentation Map](#documentation-map)
@@ -29,14 +29,12 @@ Key behaviors:
 
 - Local IPC control plane over a Unix socket.
 - Best-effort global playback auto-pause via `playerctl` and MPRIS.
-- Multiple transcription backends: `whisper_local`, `whisper_server`, and `openrouter`.
+- Multiple transcription backends: `openai_compatible`, legacy `openrouter`, `whisper_local`, and `whisper_server`.
 - Multiple output backends: typed text, clipboard copy, or clipboard copy with autopaste.
 - Guardrails for cooldowns, rate limits, continuous mode limits, and optional soft-spend controls.
 - Transcript retention and replay when output injection fails.
 
 ## How It Works
-
-The following diagram shows the normal dictation path through the workspace.
 
 ```mermaid
 flowchart LR
@@ -45,11 +43,11 @@ flowchart LR
     IPC --> Daemon[sttd daemon]
     Daemon --> Playback[playerctl MPRIS pause or resume]
     Daemon --> Provider[Transcription provider]
-    Provider --> Transcript[Transcript text]
+    Provider --> Transcript[Final transcript text]
     Transcript --> Output[wtype or wl-copy injection]
 ```
 
-`sttd` accepts a recording request immediately, pauses currently playing media, starts audio capture once the playback gate finishes or times out, transcribes the utterance, and then injects the transcript into the focused application.
+`sttd` accepts a recording request immediately, pauses currently playing media, starts audio capture once the playback gate finishes or times out, transcribes the utterance, and injects only the final transcript.
 
 ## Requirements
 
@@ -57,9 +55,9 @@ flowchart LR
 - Rust `1.85` and Cargo.
 - `uv` for local workflow sync.
 - One transcription backend:
+  - a hosted OpenAI-compatible provider such as DashScope `qwen3-asr-flash`
   - `whisper-cli` for `whisper_local`
   - `whisper-server` for `whisper_server`
-  - an OpenRouter API key for `openrouter`
 - `wtype` for typed output mode.
 - `wl-copy` for clipboard-based output modes.
 - `playerctl` if you want automatic playback pause and resume.
@@ -83,11 +81,18 @@ cp config/sttd.env.example ~/.config/sttd/sttd.env
 
 ### 3. Choose a transcription provider
 
-The default configuration uses `whisper_local`. Adjust `~/.config/sttd/sttd.toml` and `~/.config/sttd/sttd.env` as needed:
+The shipped example config is ready for DashScope `qwen3-asr-flash` through the canonical hosted provider contract:
 
-- `whisper_local`: set `whisper_cmd` and `whisper_model_path`.
+- set `STTD_PROVIDER_API_KEY` in `~/.config/sttd/sttd.env`
+- keep `provider.kind = "openai_compatible"`
+- keep `request_mode = "chat_completions"`
+- keep `capability_probe = false` for the DashScope path
+
+Other provider choices:
+
+- `whisper_local`: set `provider.kind = "whisper_local"`, comment out `language_hints` and `request_mode`, and point `whisper_model_path` at a local model.
 - `whisper_server`: set `provider.kind = "whisper_server"` and a `base_url`.
-- `openrouter`: set `provider.kind = "openrouter"` and provide `STTD_OPENROUTER_API_KEY`.
+- `openrouter`: still supported as a compatibility alias, but prefer `openai_compatible` plus canonical hosted env names for new configs.
 
 ### 4. Build and start the daemon
 
@@ -112,27 +117,6 @@ cargo run -p sttctl -- toggle-continuous
 cargo run -p sttctl -- toggle-continuous
 ```
 
-## Control Commands
-
-`sttctl` currently supports these commands:
-
-| Command | What it does |
-| --- | --- |
-| `ptt-press` | Starts a push-to-talk recording session. |
-| `ptt-release` | Stops the current push-to-talk session and triggers transcription. |
-| `toggle-continuous` | Turns continuous dictation on or off. |
-| `replay-last-transcript` | Re-injects the last retained transcript after an output failure. |
-| `status` | Prints daemon state, protocol version, guardrail counters, and retained transcript state. |
-| `shutdown` | Stops the daemon cleanly. |
-
-Useful examples:
-
-```bash
-cargo run -p sttctl -- status
-cargo run -p sttctl -- replay-last-transcript
-cargo run -p sttctl -- shutdown
-```
-
 ## Configuration Overview
 
 `sttd` loads settings from `sttd.toml`, then applies environment overrides from `sttd.env`.
@@ -141,9 +125,24 @@ cargo run -p sttctl -- shutdown
 
 | Value | Use when | Notes |
 | --- | --- | --- |
+| `openai_compatible` | You want a hosted backend such as DashScope Qwen or another OpenAI-compatible STT provider. | Canonical hosted provider kind. |
+| `openrouter` | You have an existing OpenRouter config. | Legacy-compatible alias routed through the same hosted implementation. |
 | `whisper_local` | You want local CLI-based transcription. | Uses `whisper-cli` and a local model file. |
 | `whisper_server` | You want persistent local inference over HTTP. | Targets `POST /inference` on the configured `base_url`. |
-| `openrouter` | You want a hosted backend. | Requires `STTD_OPENROUTER_API_KEY`. |
+
+### Hosted provider fields
+
+- Canonical TOML/env names are `provider.api_key`, `provider.language_hints`, `provider.request_mode`, `STTD_PROVIDER_API_KEY`, `STTD_PROVIDER_BASE_URL`, `STTD_PROVIDER_MODEL`, `STTD_PROVIDER_LANGUAGE`, `STTD_PROVIDER_LANGUAGE_HINTS`, and `STTD_PROVIDER_REQUEST_MODE`.
+- Deprecated aliases remain supported: `provider.openrouter_api_key`, `STTD_OPENROUTER_API_KEY`, `STTD_OPENROUTER_MODEL`, and `STTD_OPENROUTER_LANGUAGE`.
+- Precedence is `runtime canonical > runtime legacy > env-file canonical > env-file legacy > TOML canonical > TOML legacy`.
+- Blank canonical or legacy hosted API keys are treated as unset before precedence resolution, so empty higher-priority values do not hide a lower-priority secret.
+
+### Language defaults
+
+- `provider.language` now defaults to unset instead of forcing English.
+- That change affects both hosted providers and local Whisper runs.
+- For bilingual English/Mandarin hosted benchmarking, prefer `provider.language_hints = ["zh", "en"]`.
+- To reproduce the historical pre-change local Whisper baseline, explicitly set `provider.language = "en"` and keep an English-only `.en` model.
 
 ### Output modes
 
@@ -153,15 +152,23 @@ cargo run -p sttctl -- shutdown
 | `clipboard` | Copies text to the clipboard with `wl-copy`. |
 | `clipboard_autopaste` | Copies text and then pastes it. |
 
-### Other important sections
-
-- `[playback]` controls whether `sttd` pauses active players and how long it waits for `playerctl`.
-- `[guardrails]` limits request rate, continuous mode duration, provider cooldown, and optional spending.
-- `[audio]` and `[vad]` tune capture and utterance segmentation.
-- `[privacy]` controls log redaction and transcript persistence.
-- `[debug_wav]` enables bounded WAV capture for troubleshooting.
-
 See [config/sttd.example.toml](./config/sttd.example.toml) and [config/sttd.env.example](./config/sttd.env.example) for the full template.
+
+## Benchmarking
+
+The Phase 1 benchmark procedure lives in [_bmad-output/implementation-artifacts/qwen3-asr-flash-benchmark-2026-03-11.md](./_bmad-output/implementation-artifacts/qwen3-asr-flash-benchmark-2026-03-11.md).
+
+Use that artifact to record:
+
+- the fixed 9-utterance English / Mandarin / mixed benchmark matrix
+- raw transcript output for each utterance
+- end-to-end latency from stop event or VAD flush to successful transcript injection completion
+- approximate per-request cost
+
+Compare two paths:
+
+- the historical pre-change local Whisper baseline with `provider.language = "en"`
+- the DashScope `qwen3-asr-flash` hosted path with `request_mode = "chat_completions"`
 
 ## Run as a systemd User Service
 
@@ -183,12 +190,6 @@ systemctl --user enable --now whisper-server.service
 systemctl --user status whisper-server.service
 ```
 
-The service units expect:
-
-- `~/.config/sttd/sttd.toml`
-- `~/.config/sttd/sttd.env`
-- `sttd` to be available on your `PATH`
-
 ## Development
 
 Common local commands:
@@ -206,18 +207,16 @@ Contributor notes:
 - The workspace uses Rust 2024 edition and forbids unsafe code.
 - Runtime contracts are covered by integration tests under `crates/sttd/tests`.
 - Protocol compatibility matters across `common`, `sttd`, and `sttctl`.
-- Playback coordination, provider adapters, and state-machine transitions are the highest-risk change areas.
+- Provider contract, playback lifecycle, and final-transcript injection are the highest-risk change areas.
 
 ## Documentation Map
-
-Use the generated docs set when you need more depth than this README:
 
 - [docs/index.md](./docs/index.md) for the documentation entry point.
 - [docs/project-overview.md](./docs/project-overview.md) for the repo summary.
 - [docs/architecture-sttd.md](./docs/architecture-sttd.md) for daemon internals.
 - [docs/api-contracts-sttd.md](./docs/api-contracts-sttd.md) for IPC and provider contracts.
+- [docs/development-guide-sttd.md](./docs/development-guide-sttd.md) for daemon-specific setup and validation.
 - [docs/deployment-guide.md](./docs/deployment-guide.md) for service deployment details.
-- [docs/contribution-guide.md](./docs/contribution-guide.md) for contribution-specific guidance.
 
 ## License
 

@@ -10,4 +10,5 @@ pub mod injection;
 pub mod ipc;
 pub mod playback;
 pub mod provider;
+pub mod runtime_pipeline;
 pub mod state;

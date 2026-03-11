@@ -147,6 +147,7 @@ impl WhisperServerProvider {
         let probe_request = TranscribeRequest {
             model: self.model.clone(),
             language: self.default_language.clone(),
+            language_hints: Vec::new(),
             prompt: None,
             temperature: None,
             pcm16_audio: vec![0_i16; 1_600],

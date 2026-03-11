@@ -1,28 +1,13 @@
-# API Contracts - sttd (Exhaustive)
+# API Contracts - sttd
 
-## 1. Local IPC Transport Contract
+## Local IPC Transport
 
 - Transport: Unix domain socket
 - Client helper: `sttd::ipc::send_request`
 - Server handler: `sttd::ipc::server::run`
-- Socket path source: `Config.ipc.socket_path` (expanded from config template)
+- Socket path source: `Config.ipc.socket_path`
 
-### Request Envelope
-
-```json
-{
-  "protocol_version": 1,
-  "command": {
-    "type": "status"
-  }
-}
-```
-
-Source model: `common::protocol::RequestEnvelope`
-
-### Command Enum
-
-`common::protocol::Command` supports:
+Supported commands remain:
 
 - `ptt-press`
 - `ptt-release`
@@ -31,151 +16,54 @@ Source model: `common::protocol::RequestEnvelope`
 - `status`
 - `shutdown`
 
-### Response Envelope
+The daemon still injects only the final transcript. No protocol changes were made for hosted Qwen support.
 
-```json
-{
-  "protocol_version": 1,
-  "result": {
-    "status": "ok",
-    "payload": {
-      "type": "ack",
-      "message": "..."
-    }
-  }
-}
-```
+## Provider-facing Contracts
 
-or
+### Hosted OpenAI-compatible Provider
 
-```json
-{
-  "protocol_version": 1,
-  "result": {
-    "status": "err",
-    "payload": {
-      "code": "ERR_RATE_LIMIT",
-      "message": "request limit reached",
-      "retryable": true
-    }
-  }
-}
-```
+Canonical provider kinds:
 
-### Status Payload Contract
+- `openai_compatible`
+- `openrouter` as a legacy alias routed through the same implementation
 
-`common::protocol::StatusPayload` fields:
+Outbound endpoints:
 
-- `state`: `idle | push_to_talk_active | continuous_active | processing`
-- `protocol_version`
-- `cooldown_remaining_seconds`
-- `requests_in_last_minute`
-- `has_retained_transcript`
-- `last_output_error_code`
-- `last_audio_error_code`
-
-Backward compatibility detail: retained/audio error fields are `#[serde(default)]`. No playback-specific protocol fields were added.
-
-## 2. IPC Command -> Behavior Mapping
-
-### `PttPress`
-
-- Valid from `Idle`; moves to `PushToTalkActive`
-- Returns the existing ACK immediately after the state transition is accepted
-- Runtime worker pauses the current `Playing` snapshot before opening audio capture
-- Fails if continuous mode active (`ERR_INVALID_TRANSITION`)
-
-### `PttRelease`
-
-- Valid from `PushToTalkActive`; queues pending utterance duration and moves to `Processing`
-- If release arrives before capture is permitted, runtime treats the session as a zero-length cancelled capture and skips transcription
-- Resume runs only for players that `sttd` successfully paused for the same session
-
-### `ToggleContinuous`
-
-- Idle -> ContinuousActive
-- ContinuousActive -> Idle
-- Enable ACK remains immediate even while the playback start gate is still resolving
-- Runtime-driven continuous stop paths use the same conditional playback resume logic as explicit disable
-- Rejected during PTT active/processing
-
-### `ReplayLastTranscript`
-
-- Requires `Idle` and replay handler availability
-- Re-injects retained transcript via injector backend
-- Failure maps to output backend errors and retains transcript for retry
-
-### `Status`
-
-- Returns state snapshot and guardrail/cooldown indicators
-- Reports `push_to_talk_active` or `continuous_active` as soon as a start request is accepted, even if the playback gate is unresolved
-- Does not expose paused-player details or playback ownership
-
-### `Shutdown`
-
-- Returns ACK and requests server loop stop
-- After ACK, daemon shutdown includes worker drain plus one best-effort playback resume pass for any session-owned paused players
-
-## 3. Error Code Contract
-
-### Protocol/System
-
-- `ERR_PROTOCOL_VERSION`
-- `ERR_BAD_REQUEST`
-- `ERR_INVALID_TRANSITION`
-- `ERR_RATE_LIMIT`
-- `ERR_PROVIDER_COOLDOWN`
-- `ERR_CONTINUOUS_LIMIT`
-- `ERR_SOFT_SPEND_LIMIT`
-
-### Output and Audio
-
-- `ERR_OUTPUT_BACKEND_UNAVAILABLE`
-- `ERR_OUTPUT_BACKEND_FAILED`
-- `ERR_AUDIO_INPUT_UNAVAILABLE`
-
-### Replay-specific
-
-- `ERR_REPLAY_HANDLER_UNAVAILABLE`
-
-## 4. Provider-facing HTTP Contracts (sttd as client)
-
-### OpenRouter Provider
-
-Primary endpoint:
-- `POST {base_url}/audio/transcriptions` (multipart form)
-
-Fallback endpoint when transcription endpoint incompatible:
-- `POST {base_url}/chat/completions` with `input_audio` payload
+- `POST {base_url}/audio/transcriptions` when `request_mode = "auto"` and the provider starts on the transcription endpoint
+- `POST {base_url}/chat/completions` when:
+  - `request_mode = "chat_completions"`, or
+  - `auto` mode falls back after `/audio/transcriptions` incompatibility
 
 Auth header:
+
 - `Authorization: Bearer <api_key>`
 
-Common request fields:
-- `model`
-- `language` (optional)
-- `prompt` (optional)
-- `temperature` (optional)
-- `file` (wav bytes)
+Hosted request behavior:
 
-Mapped HTTP errors:
+- canonical config/env names: `provider.api_key`, `provider.language_hints`, `provider.request_mode`, `STTD_PROVIDER_API_KEY`, `STTD_PROVIDER_BASE_URL`, `STTD_PROVIDER_MODEL`, `STTD_PROVIDER_LANGUAGE`, `STTD_PROVIDER_LANGUAGE_HINTS`, `STTD_PROVIDER_REQUEST_MODE`
+- deprecated aliases remain accepted for compatibility: `provider.openrouter_api_key`, `STTD_OPENROUTER_API_KEY`, `STTD_OPENROUTER_MODEL`, `STTD_OPENROUTER_LANGUAGE`
+- `request_mode = "chat_completions"` never attempts `/audio/transcriptions`
+- generic chat-completions fallback keeps a fixed transcript-only instruction and forces `temperature = 0.0`
+- DashScope `qwen3-asr-flash` sends a minimal OpenAI-compatible body: `stream`, one user `input_audio` item whose `data` is a `data:audio/wav;base64,...` Data URL, and optional `asr_options.language` when a single language is available
+
+Error mapping remains:
+
 - 401/403 -> `ProviderError::Auth`
 - 429 -> `ProviderError::RateLimited`
-- others -> `ProviderError::Http`
+- 5xx -> retryable `ProviderError::Http`
+- assistant-like or missing-audio chat responses -> retryable provider transport failure after reinforced retry rules
 
 ### whisper_server Provider
 
-Endpoint:
-- `POST {base_url}/inference` (multipart wav)
-
-Optional startup probe:
-- posts short sample to `/inference` to validate readiness/language compatibility
+- endpoint: `POST {base_url}/inference`
+- startup probe: optional short-sample `POST /inference`
 
 ### whisper_local Provider
 
-No HTTP API. Process invocation contract:
-- invokes `whisper-cli` with generated wav file and output text file contract (`-otxt -of <prefix>`)
+- process contract: invokes `whisper-cli` with generated WAV/TXT files
 
-## 5. Non-REST Note
+## Runtime Semantics
 
-No native public REST API server is implemented by this repository; its control plane is local IPC.
+- push-to-talk and continuous modes still end in a single final transcription request per utterance
+- transcript injection still happens only after transcription completes
+- output failures still retain the transcript for replay

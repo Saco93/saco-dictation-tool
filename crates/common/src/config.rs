@@ -7,11 +7,16 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const ENV_API_KEY: &str = "STTD_OPENROUTER_API_KEY";
-const ENV_MODEL: &str = "STTD_OPENROUTER_MODEL";
-const ENV_LANGUAGE: &str = "STTD_OPENROUTER_LANGUAGE";
+const ENV_PROVIDER_API_KEY: &str = "STTD_PROVIDER_API_KEY";
+const ENV_OPENROUTER_API_KEY: &str = "STTD_OPENROUTER_API_KEY";
+const ENV_PROVIDER_MODEL: &str = "STTD_PROVIDER_MODEL";
+const ENV_OPENROUTER_MODEL: &str = "STTD_OPENROUTER_MODEL";
+const ENV_PROVIDER_LANGUAGE: &str = "STTD_PROVIDER_LANGUAGE";
+const ENV_OPENROUTER_LANGUAGE: &str = "STTD_OPENROUTER_LANGUAGE";
 const ENV_PROVIDER_KIND: &str = "STTD_PROVIDER_KIND";
 const ENV_PROVIDER_BASE_URL: &str = "STTD_PROVIDER_BASE_URL";
+const ENV_PROVIDER_LANGUAGE_HINTS: &str = "STTD_PROVIDER_LANGUAGE_HINTS";
+const ENV_PROVIDER_REQUEST_MODE: &str = "STTD_PROVIDER_REQUEST_MODE";
 const ENV_WHISPER_CMD: &str = "STTD_WHISPER_CMD";
 const ENV_WHISPER_MODEL_PATH: &str = "STTD_WHISPER_MODEL_PATH";
 const ENV_WHISPER_THREADS: &str = "STTD_WHISPER_THREADS";
@@ -36,7 +41,7 @@ pub enum ConfigError {
     #[error("invalid value for `{field}`: {reason}")]
     InvalidValue { field: &'static str, reason: String },
     #[error(
-        "OpenRouter API key is missing. Set `{ENV_API_KEY}` or configure provider.openrouter_api_key"
+        "Hosted provider API key is missing. Set `{ENV_PROVIDER_API_KEY}` or configure provider.api_key (deprecated alias: `{ENV_OPENROUTER_API_KEY}` / provider.openrouter_api_key)"
     )]
     MissingApiKey,
 }
@@ -62,12 +67,15 @@ pub struct ProviderConfig {
     pub base_url: String,
     pub model: String,
     pub language: Option<String>,
+    pub language_hints: Vec<String>,
     pub prompt: Option<String>,
     pub temperature: Option<f32>,
     pub timeout_ms: u64,
     pub max_retries: u32,
     pub capability_probe: bool,
+    pub api_key: Option<String>,
     pub openrouter_api_key: Option<String>,
+    pub request_mode: String,
     pub whisper_cmd: String,
     pub whisper_model_path: Option<String>,
     pub whisper_threads: Option<u16>,
@@ -173,13 +181,16 @@ impl Default for ProviderConfig {
             kind: "whisper_local".to_string(),
             base_url: "https://openrouter.ai/api/v1".to_string(),
             model: "openai/whisper-1".to_string(),
-            language: Some("en".to_string()),
+            language: None,
+            language_hints: Vec::new(),
             prompt: None,
             temperature: None,
             timeout_ms: 20_000,
             max_retries: 2,
             capability_probe: true,
+            api_key: None,
             openrouter_api_key: None,
+            request_mode: "auto".to_string(),
             whisper_cmd: "whisper-cli".to_string(),
             whisper_model_path: Some(
                 "/usr/share/whisper.cpp/models/ggml-small.en-q5_1.bin".to_string(),
@@ -341,105 +352,121 @@ impl Config {
     ) -> Result<(), ConfigError> {
         let file_env = read_env_file(&self.env_file_path())?;
 
-        let pick = |key: &str| -> Option<String> {
-            runtime_env
-                .get(key)
-                .cloned()
-                .or_else(|| file_env.get(key).cloned())
-        };
-
-        if let Some(v) = pick(ENV_MODEL) {
+        if let Some(v) = pick_env_value(
+            runtime_env,
+            &file_env,
+            ENV_PROVIDER_MODEL,
+            Some(ENV_OPENROUTER_MODEL),
+        ) {
             self.provider.model = v;
         }
-        if let Some(v) = pick(ENV_LANGUAGE) {
-            self.provider.language = Some(v);
+        if let Some(v) = pick_env_value(
+            runtime_env,
+            &file_env,
+            ENV_PROVIDER_LANGUAGE,
+            Some(ENV_OPENROUTER_LANGUAGE),
+        ) {
+            self.provider.language = trimmed_non_empty(&v);
         }
-        if let Some(v) = pick(ENV_PROVIDER_KIND) {
-            self.provider.kind = v.to_ascii_lowercase();
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_PROVIDER_KIND, None) {
+            self.provider.kind = v;
         }
-        if let Some(v) = pick(ENV_PROVIDER_BASE_URL) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_PROVIDER_BASE_URL, None) {
             self.provider.base_url = v;
         }
-        if let Some(v) = pick(ENV_WHISPER_CMD) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_PROVIDER_LANGUAGE_HINTS, None) {
+            self.provider.language_hints = parse_language_hints(&v)?;
+        }
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_PROVIDER_REQUEST_MODE, None) {
+            self.provider.request_mode = v;
+        }
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_WHISPER_CMD, None) {
             self.provider.whisper_cmd = v;
         }
-        if let Some(v) = pick(ENV_WHISPER_MODEL_PATH) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_WHISPER_MODEL_PATH, None) {
             self.provider.whisper_model_path = Some(v);
         }
-        if let Some(v) = pick(ENV_WHISPER_THREADS) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_WHISPER_THREADS, None) {
             let parsed = v.parse::<u16>().map_err(|_| ConfigError::InvalidValue {
                 field: "provider.whisper_threads",
                 reason: format!("`{v}` is not a valid unsigned integer"),
             })?;
             self.provider.whisper_threads = Some(parsed);
         }
-        if let Some(v) = pick(ENV_WHISPER_BEAM_SIZE) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_WHISPER_BEAM_SIZE, None) {
             let parsed = v.parse::<u16>().map_err(|_| ConfigError::InvalidValue {
                 field: "provider.whisper_beam_size",
                 reason: format!("`{v}` is not a valid unsigned integer"),
             })?;
             self.provider.whisper_beam_size = parsed;
         }
-        if let Some(v) = pick(ENV_WHISPER_BEST_OF) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_WHISPER_BEST_OF, None) {
             let parsed = v.parse::<u16>().map_err(|_| ConfigError::InvalidValue {
                 field: "provider.whisper_best_of",
                 reason: format!("`{v}` is not a valid unsigned integer"),
             })?;
             self.provider.whisper_best_of = parsed;
         }
-        if let Some(v) = pick(ENV_WHISPER_NO_FALLBACK) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_WHISPER_NO_FALLBACK, None) {
             let parsed = v.parse::<bool>().map_err(|_| ConfigError::InvalidValue {
                 field: "provider.whisper_no_fallback",
                 reason: format!("`{v}` is not a valid bool"),
             })?;
             self.provider.whisper_no_fallback = parsed;
         }
-        if let Some(v) = pick(ENV_WHISPER_NO_TIMESTAMPS) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_WHISPER_NO_TIMESTAMPS, None) {
             let parsed = v.parse::<bool>().map_err(|_| ConfigError::InvalidValue {
                 field: "provider.whisper_no_timestamps",
                 reason: format!("`{v}` is not a valid bool"),
             })?;
             self.provider.whisper_no_timestamps = parsed;
         }
-        if let Some(v) = pick(ENV_INPUT_DEVICE) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_INPUT_DEVICE, None) {
             self.audio.input_device = Some(v);
         }
-        if let Some(v) = pick(ENV_PLAYBACK_ENABLED) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_PLAYBACK_ENABLED, None) {
             let parsed = v.parse::<bool>().map_err(|_| ConfigError::InvalidValue {
                 field: "playback.enabled",
                 reason: format!("`{v}` is not a valid bool"),
             })?;
             self.playback.enabled = parsed;
         }
-        if let Some(v) = pick(ENV_PLAYERCTL_CMD) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_PLAYERCTL_CMD, None) {
             self.playback.playerctl_cmd = v;
         }
-        if let Some(v) = pick(ENV_PLAYBACK_COMMAND_TIMEOUT_MS) {
+        if let Some(v) = pick_env_value(
+            runtime_env,
+            &file_env,
+            ENV_PLAYBACK_COMMAND_TIMEOUT_MS,
+            None,
+        ) {
             let parsed = v.parse::<u64>().map_err(|_| ConfigError::InvalidValue {
                 field: "playback.command_timeout_ms",
                 reason: format!("`{v}` is not a valid unsigned integer"),
             })?;
             self.playback.command_timeout_ms = parsed;
         }
-        if let Some(v) = pick(ENV_PLAYBACK_AGGREGATE_TIMEOUT_MS) {
+        if let Some(v) = pick_env_value(
+            runtime_env,
+            &file_env,
+            ENV_PLAYBACK_AGGREGATE_TIMEOUT_MS,
+            None,
+        ) {
             let parsed = v.parse::<u64>().map_err(|_| ConfigError::InvalidValue {
                 field: "playback.aggregate_timeout_ms",
                 reason: format!("`{v}` is not a valid unsigned integer"),
             })?;
             self.playback.aggregate_timeout_ms = parsed;
         }
-        if let Some(v) = pick(ENV_API_KEY) {
-            self.provider.openrouter_api_key = Some(v);
-        }
 
-        if let Some(v) = pick(ENV_SOFT_SPEND_LIMIT) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_SOFT_SPEND_LIMIT, None) {
             let parsed = v.parse::<f32>().map_err(|_| ConfigError::InvalidValue {
                 field: "guardrails.monthly_soft_spend_limit_usd",
                 reason: format!("`{v}` is not a valid float"),
             })?;
             self.guardrails.monthly_soft_spend_limit_usd = Some(parsed);
         }
-        if let Some(v) = pick(ENV_ESTIMATED_REQUEST_COST) {
+        if let Some(v) = pick_env_value(runtime_env, &file_env, ENV_ESTIMATED_REQUEST_COST, None) {
             let parsed = v.parse::<f32>().map_err(|_| ConfigError::InvalidValue {
                 field: "guardrails.estimated_request_cost_usd",
                 reason: format!("`{v}` is not a valid float"),
@@ -447,22 +474,55 @@ impl Config {
             self.guardrails.estimated_request_cost_usd = parsed;
         }
 
+        let resolved_api_key = resolve_hosted_api_key(
+            runtime_env,
+            &file_env,
+            self.provider.api_key.as_deref(),
+            self.provider.openrouter_api_key.as_deref(),
+        );
+        self.provider.api_key = resolved_api_key.clone();
+        self.provider.openrouter_api_key = resolved_api_key;
+        self.provider.kind = self.provider.kind.trim().to_ascii_lowercase();
+        self.provider.request_mode = self.provider.request_mode.trim().to_ascii_lowercase();
+
         Ok(())
     }
 
     fn validate(&self, require_api_key: bool) -> Result<(), ConfigError> {
         let provider_kind = self.provider.kind.trim().to_ascii_lowercase();
-        if provider_kind != "openrouter"
+        if provider_kind != "openai_compatible"
+            && provider_kind != "openrouter"
             && provider_kind != "whisper_local"
             && provider_kind != "whisper_server"
         {
             return Err(ConfigError::InvalidValue {
                 field: "provider.kind",
-                reason: "allowed values: openrouter|whisper_local|whisper_server".to_string(),
+                reason: "allowed values: openai_compatible|openrouter|whisper_local|whisper_server"
+                    .to_string(),
             });
         }
 
-        if provider_kind == "openrouter" {
+        let request_mode = self.provider.request_mode.trim().to_ascii_lowercase();
+        if request_mode != "auto" && request_mode != "chat_completions" {
+            return Err(ConfigError::InvalidValue {
+                field: "provider.request_mode",
+                reason: "allowed values: auto|chat_completions".to_string(),
+            });
+        }
+
+        if self
+            .provider
+            .language_hints
+            .iter()
+            .any(|hint| hint.trim().is_empty())
+        {
+            return Err(ConfigError::InvalidValue {
+                field: "provider.language_hints",
+                reason: "entries must be non-empty strings".to_string(),
+            });
+        }
+
+        if is_hosted_provider_kind(&provider_kind) {
             if self.provider.model.trim().is_empty() {
                 return Err(ConfigError::InvalidValue {
                     field: "provider.model",
@@ -470,11 +530,33 @@ impl Config {
                 });
             }
 
+            if self.provider.base_url.trim().is_empty() {
+                return Err(ConfigError::InvalidValue {
+                    field: "provider.base_url",
+                    reason: "must not be empty for hosted providers".to_string(),
+                });
+            }
+
             if require_api_key {
-                match self.provider.openrouter_api_key.as_deref() {
+                match self.provider.api_key.as_deref() {
                     Some(v) if !v.trim().is_empty() => {}
                     _ => return Err(ConfigError::MissingApiKey),
                 }
+            }
+        } else {
+            if !self.provider.language_hints.is_empty() {
+                return Err(ConfigError::InvalidValue {
+                    field: "provider.language_hints",
+                    reason: "is only supported for openai_compatible/openrouter providers"
+                        .to_string(),
+                });
+            }
+            if request_mode != "auto" {
+                return Err(ConfigError::InvalidValue {
+                    field: "provider.request_mode",
+                    reason: "is only supported for openai_compatible/openrouter providers"
+                        .to_string(),
+                });
             }
         }
 
@@ -615,11 +697,16 @@ impl Config {
 
 fn collect_runtime_env() -> HashMap<String, String> {
     [
-        ENV_API_KEY,
-        ENV_MODEL,
-        ENV_LANGUAGE,
+        ENV_PROVIDER_API_KEY,
+        ENV_OPENROUTER_API_KEY,
+        ENV_PROVIDER_MODEL,
+        ENV_OPENROUTER_MODEL,
+        ENV_PROVIDER_LANGUAGE,
+        ENV_OPENROUTER_LANGUAGE,
         ENV_PROVIDER_KIND,
         ENV_PROVIDER_BASE_URL,
+        ENV_PROVIDER_LANGUAGE_HINTS,
+        ENV_PROVIDER_REQUEST_MODE,
         ENV_WHISPER_CMD,
         ENV_WHISPER_MODEL_PATH,
         ENV_WHISPER_THREADS,
@@ -642,6 +729,74 @@ fn collect_runtime_env() -> HashMap<String, String> {
     .into_iter()
     .filter_map(|key| env::var(key).ok().map(|v| (key.to_string(), v)))
     .collect()
+}
+
+fn pick_env_value(
+    runtime_env: &HashMap<String, String>,
+    file_env: &HashMap<String, String>,
+    canonical_key: &str,
+    legacy_key: Option<&str>,
+) -> Option<String> {
+    runtime_env
+        .get(canonical_key)
+        .cloned()
+        .or_else(|| legacy_key.and_then(|key| runtime_env.get(key).cloned()))
+        .or_else(|| file_env.get(canonical_key).cloned())
+        .or_else(|| legacy_key.and_then(|key| file_env.get(key).cloned()))
+}
+
+fn resolve_hosted_api_key(
+    runtime_env: &HashMap<String, String>,
+    file_env: &HashMap<String, String>,
+    toml_canonical: Option<&str>,
+    toml_legacy: Option<&str>,
+) -> Option<String> {
+    [
+        runtime_env.get(ENV_PROVIDER_API_KEY).map(String::as_str),
+        runtime_env.get(ENV_OPENROUTER_API_KEY).map(String::as_str),
+        file_env.get(ENV_PROVIDER_API_KEY).map(String::as_str),
+        file_env.get(ENV_OPENROUTER_API_KEY).map(String::as_str),
+        toml_canonical,
+        toml_legacy,
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(trimmed_non_empty)
+}
+
+fn trimmed_non_empty(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn parse_language_hints(raw: &str) -> Result<Vec<String>, ConfigError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    trimmed
+        .split(',')
+        .map(str::trim)
+        .map(|hint| {
+            if hint.is_empty() {
+                Err(ConfigError::InvalidValue {
+                    field: "provider.language_hints",
+                    reason: "entries must be non-empty strings".to_string(),
+                })
+            } else {
+                Ok(hint.to_string())
+            }
+        })
+        .collect()
+}
+
+fn is_hosted_provider_kind(kind: &str) -> bool {
+    kind == "openai_compatible" || kind == "openrouter"
 }
 
 fn read_env_file(path: &Path) -> Result<HashMap<String, String>, ConfigError> {
@@ -713,6 +868,7 @@ mod tests {
     use std::{
         collections::HashMap,
         fs,
+        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -772,6 +928,23 @@ persist_transcripts = false
 "#
     }
 
+    fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}.{suffix}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ))
+    }
+
+    fn write_temp_env_file(contents: &str) -> PathBuf {
+        let path = unique_temp_path("sttd-env-test", "env");
+        fs::write(&path, contents).expect("write env file");
+        path
+    }
+
     #[test]
     fn missing_api_key_fails_validation() {
         let env = HashMap::new();
@@ -780,7 +953,7 @@ persist_transcripts = false
     }
 
     #[test]
-    fn api_key_env_override_is_applied() {
+    fn legacy_api_key_env_override_is_applied() {
         let mut env = HashMap::new();
         env.insert(
             "STTD_OPENROUTER_API_KEY".to_string(),
@@ -789,10 +962,214 @@ persist_transcripts = false
 
         let cfg = Config::load_from_toml_for_test(base_toml(), &env)
             .expect("config should load with env key");
+        assert_eq!(cfg.provider.api_key.as_deref(), Some("sk-test-from-env"));
         assert_eq!(
             cfg.provider.openrouter_api_key.as_deref(),
             Some("sk-test-from-env")
         );
+    }
+
+    #[test]
+    fn canonical_api_key_env_override_wins_over_legacy_runtime_key() {
+        let mut env = HashMap::new();
+        env.insert(
+            "STTD_PROVIDER_API_KEY".to_string(),
+            "sk-canonical".to_string(),
+        );
+        env.insert(
+            "STTD_OPENROUTER_API_KEY".to_string(),
+            "sk-legacy".to_string(),
+        );
+
+        let cfg = Config::load_from_toml_for_test(base_toml(), &env)
+            .expect("config should load with canonical env key");
+        assert_eq!(cfg.provider.api_key.as_deref(), Some("sk-canonical"));
+        assert_eq!(
+            cfg.provider.openrouter_api_key.as_deref(),
+            Some("sk-canonical")
+        );
+    }
+
+    #[test]
+    fn openai_compatible_kind_and_optional_language_default_are_accepted() {
+        let raw = base_toml().replace("kind = \"openrouter\"", "kind = \"openai_compatible\"");
+        let mut env = HashMap::new();
+        env.insert(
+            "STTD_PROVIDER_API_KEY".to_string(),
+            "sk-canonical".to_string(),
+        );
+
+        let cfg =
+            Config::load_from_toml_for_test(&raw, &env).expect("canonical hosted kind should load");
+        assert_eq!(cfg.provider.kind, "openai_compatible");
+        assert!(cfg.provider.language.is_none());
+    }
+
+    #[test]
+    fn blank_language_env_override_unsets_language_hint() {
+        let raw = base_toml().replace(
+            "env_file_path = \"/tmp/non-existent.env\"",
+            "language = \"en\"\nenv_file_path = \"/tmp/non-existent.env\"",
+        );
+        let mut env = HashMap::new();
+        env.insert(
+            "STTD_PROVIDER_API_KEY".to_string(),
+            "sk-canonical".to_string(),
+        );
+        env.insert("STTD_PROVIDER_LANGUAGE".to_string(), "   ".to_string());
+
+        let cfg = Config::load_from_toml_for_test(&raw, &env).expect("config should load");
+        assert!(cfg.provider.language.is_none());
+    }
+
+    #[test]
+    fn hosted_api_key_precedence_honors_runtime_env_file_and_toml_aliases() {
+        let env_file = write_temp_env_file(
+            "STTD_PROVIDER_API_KEY=sk-file-canonical\nSTTD_OPENROUTER_API_KEY=sk-file-legacy\n",
+        );
+        let raw = format!(
+            r#"
+[provider]
+kind = "openai_compatible"
+model = "openai/whisper-1"
+api_key = "sk-toml-canonical"
+openrouter_api_key = "sk-toml-legacy"
+env_file_path = "{}"
+
+[audio]
+sample_rate_hz = 16000
+channels = 1
+frame_ms = 20
+max_utterance_ms = 30000
+max_payload_bytes = 1500000
+
+[vad]
+start_threshold_dbfs = -38.0
+end_silence_ms = 700
+min_speech_ms = 250
+max_utterance_ms = 30000
+
+[guardrails]
+max_requests_per_minute = 30
+max_continuous_minutes = 30
+provider_error_cooldown_seconds = 10
+estimated_request_cost_usd = 0.0
+allow_over_limit = false
+
+[playback]
+enabled = true
+playerctl_cmd = "playerctl"
+command_timeout_ms = 400
+aggregate_timeout_ms = 1200
+
+[injection]
+output_mode = "type"
+clipboard_autopaste = false
+
+[debug_wav]
+enabled = false
+directory = "/tmp/sttd"
+ttl_hours = 24
+size_cap_mb = 100
+
+[ipc]
+socket_path = "/tmp/sttd.sock"
+socket_dir_mode = 448
+socket_file_mode = 384
+
+[privacy]
+redact_transcript_in_logs = true
+persist_transcripts = false
+"#,
+            env_file.display()
+        );
+        let mut env = HashMap::new();
+        env.insert(
+            "STTD_OPENROUTER_API_KEY".to_string(),
+            "sk-runtime-legacy".to_string(),
+        );
+
+        let cfg =
+            Config::load_from_toml_for_test(&raw, &env).expect("config should resolve precedence");
+        assert_eq!(cfg.provider.api_key.as_deref(), Some("sk-runtime-legacy"));
+        assert_eq!(
+            cfg.provider.openrouter_api_key.as_deref(),
+            Some("sk-runtime-legacy")
+        );
+
+        let _ = fs::remove_file(env_file);
+    }
+
+    #[test]
+    fn blank_canonical_api_key_does_not_shadow_lower_priority_legacy_value() {
+        let env_file = write_temp_env_file("STTD_PROVIDER_API_KEY=\n");
+        let raw = format!(
+            r#"
+[provider]
+kind = "openai_compatible"
+model = "qwen3-asr-flash"
+openrouter_api_key = "sk-toml-legacy"
+env_file_path = "{}"
+
+[audio]
+sample_rate_hz = 16000
+channels = 1
+frame_ms = 20
+max_utterance_ms = 30000
+max_payload_bytes = 1500000
+
+[vad]
+start_threshold_dbfs = -38.0
+end_silence_ms = 700
+min_speech_ms = 250
+max_utterance_ms = 30000
+
+[guardrails]
+max_requests_per_minute = 30
+max_continuous_minutes = 30
+provider_error_cooldown_seconds = 10
+estimated_request_cost_usd = 0.0
+allow_over_limit = false
+
+[playback]
+enabled = true
+playerctl_cmd = "playerctl"
+command_timeout_ms = 400
+aggregate_timeout_ms = 1200
+
+[injection]
+output_mode = "type"
+clipboard_autopaste = false
+
+[debug_wav]
+enabled = false
+directory = "/tmp/sttd"
+ttl_hours = 24
+size_cap_mb = 100
+
+[ipc]
+socket_path = "/tmp/sttd.sock"
+socket_dir_mode = 448
+socket_file_mode = 384
+
+[privacy]
+redact_transcript_in_logs = true
+persist_transcripts = false
+"#,
+            env_file.display()
+        );
+        let mut env = HashMap::new();
+        env.insert("STTD_PROVIDER_API_KEY".to_string(), "   ".to_string());
+
+        let cfg = Config::load_from_toml_for_test(&raw, &env)
+            .expect("blank canonical values should be treated as unset");
+        assert_eq!(cfg.provider.api_key.as_deref(), Some("sk-toml-legacy"));
+        assert_eq!(
+            cfg.provider.openrouter_api_key.as_deref(),
+            Some("sk-toml-legacy")
+        );
+
+        let _ = fs::remove_file(env_file);
     }
 
     #[test]
@@ -865,16 +1242,66 @@ persist_transcripts = false
     }
 
     #[test]
-    fn control_client_load_does_not_require_api_key() {
-        let filename = format!(
-            "sttd-config-test-{}-{}.toml",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
+    fn invalid_request_mode_is_rejected() {
+        let raw = base_toml().replace(
+            "env_file_path = \"/tmp/non-existent.env\"",
+            "request_mode = \"wrong\"\nenv_file_path = \"/tmp/non-existent.env\"",
         );
-        let path = std::env::temp_dir().join(filename);
+        let mut env = HashMap::new();
+        env.insert(
+            "STTD_PROVIDER_API_KEY".to_string(),
+            "sk-canonical".to_string(),
+        );
+
+        let err = Config::load_from_toml_for_test(&raw, &env).expect_err("must fail");
+        match err {
+            ConfigError::InvalidValue { field, .. } => {
+                assert_eq!(field, "provider.request_mode");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn blank_language_hint_entry_is_rejected() {
+        let raw = base_toml().replace(
+            "env_file_path = \"/tmp/non-existent.env\"",
+            "language_hints = [\"zh\", \"   \"]\nenv_file_path = \"/tmp/non-existent.env\"",
+        );
+        let mut env = HashMap::new();
+        env.insert(
+            "STTD_PROVIDER_API_KEY".to_string(),
+            "sk-canonical".to_string(),
+        );
+
+        let err = Config::load_from_toml_for_test(&raw, &env).expect_err("must fail");
+        match err {
+            ConfigError::InvalidValue { field, .. } => {
+                assert_eq!(field, "provider.language_hints");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn whisper_local_rejects_hosted_only_fields() {
+        let raw = base_toml().replace(
+            "kind = \"openrouter\"",
+            "kind = \"whisper_local\"\nrequest_mode = \"chat_completions\"\nlanguage_hints = [\"zh\", \"en\"]",
+        );
+
+        let err = Config::load_from_toml_for_test(&raw, &HashMap::new()).expect_err("must fail");
+        match err {
+            ConfigError::InvalidValue { field, .. } => {
+                assert_eq!(field, "provider.language_hints");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn control_client_load_does_not_require_api_key() {
+        let path = unique_temp_path("sttd-config-test", "toml");
         fs::write(&path, base_toml()).expect("write config");
 
         let cfg = Config::load_for_control_client(Some(path.as_path()))

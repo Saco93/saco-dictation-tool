@@ -1,31 +1,40 @@
 [provider]
-kind = "whisper_local"
-# For persistent local inference, switch to:
-# kind = "whisper_server"
-# base_url = "http://127.0.0.1:8080"
-# For whisper_local this is ignored; keep this for openrouter fallback compatibility.
-model = "openai/whisper-1"
-language = "en"
+kind = "openai_compatible"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+model = "qwen3-asr-flash"
+# Leave language unset to let the hosted provider auto-detect.
+# For single-language testing you can set `language = "en"` or `language = "zh"`.
+language_hints = ["zh", "en"]
 prompt = ""
-# Timeout for a single transcription request. Local whisper can take longer on larger models.
-timeout_ms = 120000
+timeout_ms = 20000
 max_retries = 2
-# For openrouter only. Startup validation still runs locally.
+# DashScope setup should skip the generic `/models` probe in this phase.
 capability_probe = false
+request_mode = "chat_completions"
+# Prefer STTD_PROVIDER_API_KEY in sttd.env instead of storing secrets in TOML.
+# api_key = "sk-your-dashscope-key"
+# Deprecated compatibility alias still works, but prefer `api_key`.
+# openrouter_api_key = "sk-your-dashscope-key"
+
+# Local whisper settings stay here so you can switch back for baseline runs.
 whisper_cmd = "whisper-cli"
-# Example Arch model path from whisper.cpp model packages.
 whisper_model_path = "/usr/share/whisper.cpp/models/ggml-small.en-q5_1.bin"
-# Optional; if omitted, whisper.cpp picks a default thread count.
 # whisper_threads = 16
-# Fast decode profile for dictation. Increase values for better quality but slower speed.
 whisper_beam_size = 1
 whisper_best_of = 1
 whisper_no_fallback = true
 whisper_no_timestamps = true
+
+# Historical pre-change local Whisper baseline:
+# 1. Set `kind = "whisper_local"`.
+# 2. Comment out `language_hints` and `request_mode`.
+# 3. Set `language = "en"`.
+# 4. Keep the English-only `.en` model path above.
+
 env_file_path = "${XDG_CONFIG_HOME:-~/.config}/sttd/sttd.env"
 
 [audio]
-# Leave empty to use default input device.
+# Leave empty to use the default input device.
 # input_device = "alsa_input.pci-0000_00_1f.3.analog-stereo"
 sample_rate_hz = 16000
 channels = 1
@@ -43,20 +52,15 @@ max_utterance_ms = 30000
 max_requests_per_minute = 30
 max_continuous_minutes = 30
 provider_error_cooldown_seconds = 10
-# Optional per-request estimate used for monthly soft-spend accounting.
+# Set a per-request estimate so soft-spend tracking reflects hosted usage.
 estimated_request_cost_usd = 0.0
-# Optional soft-limit. Set to a positive number to enable warnings/blocking.
 # monthly_soft_spend_limit_usd = 20.0
 allow_over_limit = false
 
 [playback]
-# Best-effort global playback control via playerctl + MPRIS.
-# Recording snapshots currently-playing players at session start only.
 enabled = true
 playerctl_cmd = "playerctl"
-# Per-command timeout for `playerctl -l`, `status`, `pause`, and `play`.
 command_timeout_ms = 400
-# Aggregate timeout budget for a full pause/resume pass across all players.
 aggregate_timeout_ms = 1200
 
 [injection]

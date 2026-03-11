@@ -166,8 +166,7 @@ mod tests {
             .expect("set stale modified time");
 
         let oversized = temp.path().join("oversized.wav");
-        std::fs::write(&oversized, vec![2_u8; 2 * 1_024 * 1_024])
-            .expect("write oversized file");
+        std::fs::write(&oversized, vec![2_u8; 2 * 1_024 * 1_024]).expect("write oversized file");
 
         let recorder = DebugWavRecorder::new(DebugWavConfig {
             enabled: true,

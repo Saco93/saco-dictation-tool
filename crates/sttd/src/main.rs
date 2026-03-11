@@ -6,10 +6,7 @@ use anyhow::Context;
 use clap::Parser;
 use common::{
     Config,
-    protocol::{
-        DictationState, ERR_AUDIO_INPUT_UNAVAILABLE, ERR_OUTPUT_BACKEND_FAILED,
-        ERR_OUTPUT_BACKEND_UNAVAILABLE,
-    },
+    protocol::{DictationState, ERR_AUDIO_INPUT_UNAVAILABLE},
 };
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -23,10 +20,11 @@ use tracing_subscriber::EnvFilter;
 use sttd::{
     audio::{AudioCapture, TARGET_SAMPLE_RATE, VadSegmenter},
     debug_wav::DebugWavRecorder,
-    injection::{InjectionError, Injector},
+    injection::Injector,
     ipc::server::{self, RuntimeCommand},
     playback::PlaybackCoordinator,
-    provider::{SttProvider, build_provider, default_request_for_config},
+    provider::{SttProvider, build_provider},
+    runtime_pipeline::{self, ProcessingDeps, UtteranceSource},
     state::{PendingPushToTalkCapture, StateMachine},
 };
 
@@ -48,10 +46,17 @@ struct RuntimeDeps {
     playback: PlaybackCoordinator,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum UtteranceSource {
-    PushToTalk,
-    Continuous,
+impl RuntimeDeps {
+    fn processing_deps(&self) -> ProcessingDeps {
+        ProcessingDeps {
+            config: self.config.clone(),
+            provider: self.provider.clone(),
+            injector: self.injector.clone(),
+            recorder: self.recorder.clone(),
+            playback: Some(self.playback.clone()),
+            state: self.state.clone(),
+        }
+    }
 }
 
 #[tokio::main]
@@ -291,7 +296,12 @@ async fn run_runtime_tick(
         ptt_buffer.clear();
     }
     if let Some(flushed) = vad.flush() {
-        process_samples(runtime, flushed, UtteranceSource::Continuous).await;
+        runtime_pipeline::process_samples(
+            &runtime.processing_deps(),
+            flushed,
+            UtteranceSource::Continuous,
+        )
+        .await;
     }
 }
 
@@ -322,7 +332,12 @@ async fn handle_push_to_talk_stop(
 
             match captured {
                 Ok(samples) => {
-                    process_samples(runtime, samples, UtteranceSource::PushToTalk).await;
+                    runtime_pipeline::process_samples(
+                        &runtime.processing_deps(),
+                        samples,
+                        UtteranceSource::PushToTalk,
+                    )
+                    .await;
                 }
                 Err(err) => {
                     error!(error = %err, duration_ms, "push-to-talk capture failed");
@@ -375,7 +390,12 @@ async fn process_continuous_cycle(
 
     for frame in samples.chunks(frame_samples) {
         if let Some(utterance) = vad.push_frame(frame) {
-            process_samples(runtime, utterance, UtteranceSource::Continuous).await;
+            runtime_pipeline::process_samples(
+                &runtime.processing_deps(),
+                utterance,
+                UtteranceSource::Continuous,
+            )
+            .await;
         }
     }
 }
@@ -478,108 +498,6 @@ async fn capture_audio(runtime: &RuntimeDeps, duration_ms: u32) -> anyhow::Resul
             Err(anyhow::anyhow!(err)).context("audio capture failed")
         }
     }
-}
-
-async fn process_samples(runtime: &RuntimeDeps, pcm16_audio: Vec<i16>, source: UtteranceSource) {
-    if pcm16_audio.is_empty() {
-        if matches!(source, UtteranceSource::PushToTalk) {
-            let mut state = runtime.state.lock().await;
-            state.finish_processing();
-        }
-        return;
-    }
-
-    let rate_gate = {
-        let mut state = runtime.state.lock().await;
-        state.mark_transcription_request()
-    };
-
-    if let Err(err) = rate_gate {
-        warn!(error = %err, "guardrail blocked transcription request");
-        if matches!(source, UtteranceSource::PushToTalk) {
-            let mut state = runtime.state.lock().await;
-            state.finish_processing();
-        }
-        return;
-    }
-
-    if runtime.recorder.is_enabled() {
-        let debug_path = runtime.config.debug_wav_dir();
-        if let Err(err) = runtime
-            .recorder
-            .maybe_write(debug_path.as_path(), &pcm16_audio, TARGET_SAMPLE_RATE)
-            .await
-        {
-            warn!(error = %err, "failed to write debug wav");
-        }
-    }
-
-    let mut request = default_request_for_config(runtime.config.as_ref(), pcm16_audio);
-    request.sample_rate_hz = TARGET_SAMPLE_RATE;
-
-    let response = match runtime.provider.transcribe_utterance(request).await {
-        Ok(response) => response,
-        Err(err) => {
-            error!(error = %err, "provider transcription failed");
-            let stopped = {
-                let mut state = runtime.state.lock().await;
-                if err.is_retryable() {
-                    state.set_provider_error_cooldown()
-                } else {
-                    None
-                }
-            };
-            if let Some(stopped) = stopped {
-                runtime
-                    .playback
-                    .on_recording_stopped(stopped.session.id)
-                    .await;
-            }
-            if matches!(source, UtteranceSource::PushToTalk) {
-                let mut state = runtime.state.lock().await;
-                state.finish_processing();
-            }
-            return;
-        }
-    };
-
-    if runtime.config.guardrails.estimated_request_cost_usd > 0.0 {
-        let mut state = runtime.state.lock().await;
-        state.add_soft_spend(runtime.config.guardrails.estimated_request_cost_usd);
-    }
-
-    match runtime.injector.inject(&response.transcript).await {
-        Ok(injected) => {
-            info!(
-                backend = injected.backend,
-                inserted = injected.inserted,
-                requires_manual_paste = injected.requires_manual_paste,
-                "transcript output completed"
-            );
-        }
-        Err(err) => {
-            record_output_failure(runtime, &response.transcript, err).await;
-        }
-    }
-
-    if matches!(source, UtteranceSource::PushToTalk) {
-        let mut state = runtime.state.lock().await;
-        state.finish_processing();
-    }
-}
-
-async fn record_output_failure(runtime: &RuntimeDeps, transcript: &str, err: InjectionError) {
-    let error_code = match &err {
-        InjectionError::BackendUnavailable => ERR_OUTPUT_BACKEND_UNAVAILABLE,
-        InjectionError::BackendFailed { .. } => ERR_OUTPUT_BACKEND_FAILED,
-    };
-    warn!(
-        error = %err,
-        error_code,
-        "failed to output transcript; retaining in memory for retry"
-    );
-    let mut state = runtime.state.lock().await;
-    state.set_last_transcript_with_error(transcript.to_string(), error_code);
 }
 
 fn init_tracing() {

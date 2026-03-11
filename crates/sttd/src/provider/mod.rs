@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use common::config::Config;
 use thiserror::Error;
 
+pub mod openai_compatible;
 pub mod openrouter;
 pub mod whisper_local;
 pub mod whisper_server;
@@ -20,6 +21,7 @@ pub struct Segment {
 pub struct TranscribeRequest {
     pub model: String,
     pub language: Option<String>,
+    pub language_hints: Vec<String>,
     pub prompt: Option<String>,
     pub temperature: Option<f32>,
     pub pcm16_audio: Vec<i16>,
@@ -83,7 +85,9 @@ pub trait SttProvider: Send + Sync {
 
 pub fn build_provider(config: &Config) -> Result<Arc<dyn SttProvider>, ProviderError> {
     match config.provider.kind.trim().to_ascii_lowercase().as_str() {
-        "openrouter" => Ok(Arc::new(openrouter::OpenRouterProvider::new(config)?)),
+        "openai_compatible" | "openrouter" => Ok(Arc::new(
+            openai_compatible::OpenAiCompatibleProvider::new(config)?,
+        )),
         "whisper_local" => Ok(Arc::new(whisper_local::WhisperLocalProvider::new(config)?)),
         "whisper_server" => Ok(Arc::new(whisper_server::WhisperServerProvider::new(
             config,
@@ -99,6 +103,7 @@ pub fn default_request_for_config(config: &Config, pcm16_audio: Vec<i16>) -> Tra
     TranscribeRequest {
         model: config.provider.model.clone(),
         language: config.provider.language.clone(),
+        language_hints: config.provider.language_hints.clone(),
         prompt: config.provider.prompt.clone(),
         temperature: config.provider.temperature,
         pcm16_audio,
